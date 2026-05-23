@@ -1,0 +1,10 @@
+{
+  "name": "html-visual-editor-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MVP for visually editing imported HTML and syncing changes back to source.",
+  "scripts": {
+    "start": "node server/index.js",
+    "check": "node --check app.js && node --check server/index.js"
+  }
+}
