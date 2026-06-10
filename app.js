@@ -266,6 +266,10 @@ function bindEvents() {
     if (event.data?.type === "editor:select") {
       selectElement(event.data.editorId);
     }
+
+    if (event.data?.type === "editor:inline-text") {
+      applyInlineTextEdit(event.data.editorId, event.data.text || "");
+    }
   });
 
   bindInspectorControl(controls.text, (element, value) => updateElementOwnText(element, value), { patch: "text" });
@@ -439,6 +443,29 @@ function applyQuickInput(control) {
       updateFloatingToolbarState(element);
     },
   });
+}
+
+function applyInlineTextEdit(editorId, text) {
+  if (!editorId) return false;
+  if (appState.selectedEditorId !== editorId) {
+    appState.selectedEditorId = editorId;
+  }
+
+  const element = getSelectedSourceElement();
+  if (!element) return false;
+
+  const sourceRange = findSourceRangeForElement(element);
+  updateElementOwnText(element, text);
+
+  const synced = syncElementToSource(element, sourceRange, "text");
+  if (!synced) return false;
+
+  controls.text.value = getOwnText(element);
+  pushHistory(sourceEditor.value);
+  refreshSelectedMetadata();
+  updateFloatingToolbarState(element);
+  scheduleAutosave();
+  return true;
 }
 
 function applyQuickTextPreset(preset) {
@@ -1058,6 +1085,7 @@ function updateCanvasScale() {
     state: appState,
     previewStage,
     canvasShell,
+    slideViewport,
     canvasInfo,
   });
 }

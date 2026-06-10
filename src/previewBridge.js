@@ -40,6 +40,17 @@ export function injectPreviewBridge(doc) {
       box-shadow: 0 0 0 6px rgba(182, 106, 88, 0.18) !important;
     }
 
+    .__html_editor_editing__ {
+      cursor: text !important;
+      -webkit-user-modify: read-write-plaintext-only;
+      user-select: text !important;
+    }
+
+    .__html_editor_editing__:focus {
+      outline: 3px solid #b66a58 !important;
+      outline-offset: 3px !important;
+    }
+
     .__html_editor_badge__ {
       position: fixed;
       z-index: 2147483647;
@@ -97,6 +108,40 @@ export function injectPreviewBridge(doc) {
         badge.hidden = false;
       }
 
+      function disableInlineEditing(element) {
+        if (!element) return;
+        element.removeAttribute("contenteditable");
+        element.removeAttribute("spellcheck");
+        element.classList.remove("__html_editor_editing__");
+      }
+
+      function enableInlineEditing(element, focusAtEnd) {
+        if (!element) return;
+        element.setAttribute("contenteditable", "plaintext-only");
+        element.setAttribute("spellcheck", "false");
+        element.classList.add("__html_editor_editing__");
+        if (!focusAtEnd) return;
+        element.focus({ preventScroll: true });
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+
+      function selectElement(element, focusAtEnd) {
+        if (selected && selected !== element) {
+          selected.classList.remove("__html_editor_selected__");
+          disableInlineEditing(selected);
+        }
+        selected = element;
+        selected.classList.remove("__html_editor_hover__");
+        selected.classList.add("__html_editor_selected__");
+        enableInlineEditing(selected, focusAtEnd);
+        showBadge(selected, false);
+      }
+
       document.addEventListener("mouseover", (event) => {
         const element = getEditable(event.target);
         if (!element || element === hovered) return;
@@ -117,26 +162,34 @@ export function injectPreviewBridge(doc) {
       document.addEventListener("click", (event) => {
         const element = getEditable(event.target);
         if (!element) return;
+        if (selected === element && selected.isContentEditable) {
+          event.stopPropagation();
+          showBadge(selected, false);
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
-        if (selected) selected.classList.remove("__html_editor_selected__");
-        selected = element;
-        selected.classList.remove("__html_editor_hover__");
-        selected.classList.add("__html_editor_selected__");
-        showBadge(selected, false);
+        selectElement(element, true);
         window.parent.postMessage({
           type: "editor:select",
           editorId: selected.dataset.editorId
         }, "*");
       }, true);
 
+      document.addEventListener("input", (event) => {
+        if (!selected || !selected.contains(event.target)) return;
+        window.parent.postMessage({
+          type: "editor:inline-text",
+          editorId: selected.dataset.editorId,
+          text: selected.textContent || ""
+        }, "*");
+        showBadge(selected, false);
+      }, true);
+
       window.__selectEditorElement = (editorId) => {
         const element = document.querySelector('[data-editor-id="' + editorId + '"]');
         if (!element) return;
-        if (selected) selected.classList.remove("__html_editor_selected__");
-        selected = element;
-        selected.classList.add("__html_editor_selected__");
-        showBadge(selected, false);
+        selectElement(element, false);
       };
     })();
   `;

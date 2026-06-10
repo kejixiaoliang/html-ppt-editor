@@ -10,33 +10,30 @@ export function applyCanvasState({ state, buttons, slideViewport, updateCanvasSc
   updateCanvasScale();
 }
 
-export function updateCanvasScale({ state, previewStage, canvasShell, canvasInfo }) {
-  if (!previewStage || !canvasShell) return;
+export function updateCanvasScale({ state, previewStage, canvasShell, slideViewport, canvasInfo }) {
+  if (!previewStage || !canvasShell || !slideViewport) return;
 
   const stageWidth = Math.max(280, previewStage.clientWidth - 56);
   const stageHeight = Math.max(260, previewStage.clientHeight - 56);
-
-  if (state.canvasMode === "adaptive") {
-    canvasShell.style.width = `${stageWidth}px`;
-    canvasShell.style.height = `${stageHeight}px`;
-    canvasInfo.textContent = `${canvasLabel(state.canvasMode)} · ${zoomLabel(state.zoomMode, 1, 1)}`;
-    return;
-  }
-
   const base = getCanvasBaseSize(state.canvasMode);
   const fitScale = Math.min(1, stageWidth / base.width, stageHeight / base.height);
-  const requestedScale = state.zoomMode === "fit" ? fitScale : Number(state.zoomMode);
-  const scale = state.zoomMode === "fit" ? fitScale : requestedScale;
-  const width = Math.max(240, base.width * scale);
-  const height = Math.max(180, base.height * scale);
+  const scale = state.zoomMode === "fit" ? fitScale : Number(state.zoomMode);
+  const scaledWidth = Math.max(1, Math.round(base.width * scale));
+  const scaledHeight = Math.max(1, Math.round(base.height * scale));
 
-  canvasShell.style.width = `${width}px`;
-  canvasShell.style.height = `${height}px`;
+  canvasShell.style.width = `${scaledWidth}px`;
+  canvasShell.style.height = `${scaledHeight}px`;
+  canvasShell.style.setProperty("--canvas-scale", String(scale));
+
+  slideViewport.style.width = `${base.width}px`;
+  slideViewport.style.height = `${base.height}px`;
+  slideViewport.style.transform = `scale(${scale})`;
+
   canvasInfo.textContent = `${canvasLabel(state.canvasMode)} · ${zoomLabel(state.zoomMode, scale, fitScale)}`;
 }
 
 export function canvasLabel(mode) {
-  if (mode === "adaptive") return "自适应";
+  if (mode === "adaptive") return "Fit";
   return mode;
 }
 
