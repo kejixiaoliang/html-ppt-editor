@@ -92,7 +92,7 @@ const sampleHtml = `<!doctype html>
         margin: 0;
         font-family: "Microsoft YaHei", sans-serif;
         background: #f4f6f8;
-        color: #111827;
+        color: #20231f;
       }
 
       .slide {
@@ -107,7 +107,7 @@ const sampleHtml = `<!doctype html>
       }
 
       .eyebrow {
-        color: #2563eb;
+        color: #6f7f3f;
         font-size: 18px;
         font-weight: 800;
       }
@@ -415,14 +415,14 @@ function injectPreviewBridge(doc) {
     }
 
     .__html_editor_hover__ {
-      outline: 2px solid #f59e0b !important;
+      outline: 2px solid #c07625 !important;
       outline-offset: 2px !important;
     }
 
     .__html_editor_selected__ {
-      outline: 3px solid #2563eb !important;
+      outline: 3px solid #6f7f3f !important;
       outline-offset: 3px !important;
-      box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.16) !important;
+      box-shadow: 0 0 0 6px rgba(111, 127, 63, 0.18) !important;
     }
 
     .__html_editor_badge__ {
@@ -432,8 +432,8 @@ function injectPreviewBridge(doc) {
       padding: 5px 8px;
       border-radius: 6px;
       color: #fff;
-      background: #2563eb;
-      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.22);
+      background: #6f7f3f;
+      box-shadow: 0 8px 24px rgba(43, 38, 30, 0.22);
       font: 700 12px/1.2 "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
       pointer-events: none;
       white-space: nowrap;
@@ -442,7 +442,7 @@ function injectPreviewBridge(doc) {
     }
 
     .__html_editor_badge__.__hover__ {
-      background: #d97706;
+      background: #c07625;
     }
   `;
 
@@ -572,7 +572,7 @@ function updateInspector() {
   controls.srcField.classList.toggle("hidden", !supportsAttribute(element, "src"));
   controls.hrefField.classList.toggle("hidden", !supportsAttribute(element, "href"));
 
-  controls.color.value = normalizeColor(element.style.color || getComputedPreviewStyle("color") || "#111827");
+  controls.color.value = normalizeColor(element.style.color || getComputedPreviewStyle("color") || "#20231f");
   controls.background.value = normalizeColor(
     element.style.backgroundColor || getComputedPreviewStyle("backgroundColor") || "#ffffff",
   );

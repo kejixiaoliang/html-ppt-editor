@@ -11,12 +11,17 @@ const requiredSnippets = {
     'id="italicBtn"',
     'id="underlineBtn"',
     'id="strikeBtn"',
+    "公众号",
+    "科技小亮AGI",
+    "https://github.com/kejixiaoliang",
     "sandbox",
     "导出 HTML",
   ],
   "styles.css": [
     ".workspace.source-collapsed",
     ".source-rail-button",
+    ".developer-strip",
+    ".github-link",
     ".format-toolbar",
     ".preview-stage",
     "overflow: hidden",
@@ -61,6 +66,7 @@ if (duplicates.length) {
 }
 
 const app = fs.readFileSync("app.js", "utf8");
+const styles = fs.readFileSync("styles.css", "utf8");
 const forbiddenAppSnippets = [
   "function syncSourceFromDoc",
   "function formatHtmlForMvp",
@@ -70,6 +76,20 @@ const forbiddenAppSnippets = [
 for (const snippet of forbiddenAppSnippets) {
   if (app.includes(snippet)) {
     throw new Error(`app.js contains forbidden source-rewriting snippet: ${snippet}`);
+  }
+}
+
+const forbiddenClassicTechColors = [
+  "#1456d9",
+  "#0d3f9f",
+  "#2563eb",
+  "#1d4ed8",
+  "20, 86, 217",
+  "37, 99, 235",
+];
+for (const color of forbiddenClassicTechColors) {
+  if (styles.includes(color) || app.includes(color)) {
+    throw new Error(`Classic blue/purple tech color should not be used: ${color}`);
   }
 }
 
