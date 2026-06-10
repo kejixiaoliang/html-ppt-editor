@@ -20,6 +20,7 @@ const ancestorList = document.querySelector("#ancestorList");
 const childrenList = document.querySelector("#childrenList");
 const workspace = document.querySelector("#workspace");
 const sourceToggleBtn = document.querySelector("#sourceToggleBtn");
+const sourceRailBtn = document.querySelector("#sourceRailBtn");
 const previewStage = document.querySelector("#previewStage");
 const canvasShell = document.querySelector("#canvasShell");
 const slideViewport = document.querySelector("#slideViewport");
@@ -44,6 +45,13 @@ const controls = {
   background: document.querySelector("#backgroundInput"),
   fontSize: document.querySelector("#fontSizeInput"),
   fontWeight: document.querySelector("#fontWeightInput"),
+  fontFamily: document.querySelector("#fontFamilyInput"),
+  lineHeight: document.querySelector("#lineHeightInput"),
+  letterSpacing: document.querySelector("#letterSpacingInput"),
+  textAlign: document.querySelector("#textAlignInput"),
+  italic: document.querySelector("#italicBtn"),
+  underline: document.querySelector("#underlineBtn"),
+  strike: document.querySelector("#strikeBtn"),
   width: document.querySelector("#widthInput"),
   height: document.querySelector("#heightInput"),
   margin: document.querySelector("#marginInput"),
@@ -59,6 +67,10 @@ const styleControlMap = {
   background: "backgroundColor",
   fontSize: "fontSize",
   fontWeight: "fontWeight",
+  fontFamily: "fontFamily",
+  lineHeight: "lineHeight",
+  letterSpacing: "letterSpacing",
+  textAlign: "textAlign",
   width: "width",
   height: "height",
   margin: "margin",
@@ -154,6 +166,7 @@ const appState = {
   selectedRange: null,
   updatingInspector: false,
   renderTimer: null,
+  previewScroll: { x: 0, y: 0 },
   history: [],
   historyIndex: -1,
   sourceCollapsed: true,
@@ -189,6 +202,7 @@ function bindEvents() {
   redoBtn.addEventListener("click", redo);
   locateSourceBtn.addEventListener("click", () => locateCurrentSourceRange(true));
   sourceToggleBtn.addEventListener("click", toggleSourcePanel);
+  sourceRailBtn.addEventListener("click", toggleSourcePanel);
   selectParentBtn.addEventListener("click", selectParentElement);
   clearSelectionBtn.addEventListener("click", clearSelection);
   document.addEventListener("keydown", handleShortcuts);
@@ -217,6 +231,9 @@ function bindEvents() {
   bindInspectorControl(controls.className, (element, value) => setOptionalAttribute(element, "class", value));
   bindInspectorControl(controls.src, (element, value) => setOptionalAttribute(element, "src", value));
   bindInspectorControl(controls.href, (element, value) => setOptionalAttribute(element, "href", value));
+  bindStyleToggle(controls.italic, "fontStyle", "italic");
+  bindTextDecorationToggle(controls.underline, "underline");
+  bindTextDecorationToggle(controls.strike, "line-through");
 
   for (const [controlName, styleName] of Object.entries(styleControlMap)) {
     bindInspectorControl(controls[controlName], (element, value) => {
@@ -237,9 +254,56 @@ function bindInspectorControl(control, applyChange) {
     }
 
     applyChange(element, control.value.trim());
+    const previewElement = getSelectedPreviewElement();
+    if (previewElement) {
+      applyChange(previewElement, control.value.trim());
+    }
     syncSourceFromDoc();
     pushHistory(sourceEditor.value);
-    renderPreview({ keepSelection: true });
+    updateFormatButtonState(button, element.style[styleName], activeValue);
+    refreshSelectedMetadata();
+  });
+}
+
+function bindStyleToggle(button, styleName, activeValue) {
+  button.addEventListener("click", () => {
+    if (appState.updatingInspector || !appState.selectedEditorId) return;
+    const element = getSelectedSourceElement();
+    if (!element) return;
+
+    const isActive = element.style[styleName] === activeValue || getComputedPreviewStyle(styleName) === activeValue;
+    element.style[styleName] = isActive ? "" : activeValue;
+    const previewElement = getSelectedPreviewElement();
+    if (previewElement) {
+      previewElement.style[styleName] = element.style[styleName];
+    }
+    syncSourceFromDoc();
+    pushHistory(sourceEditor.value);
+    refreshSelectedMetadata();
+  });
+}
+
+function bindTextDecorationToggle(button, token) {
+  button.addEventListener("click", () => {
+    if (appState.updatingInspector || !appState.selectedEditorId) return;
+    const element = getSelectedSourceElement();
+    if (!element) return;
+
+    const tokens = getTextDecorationTokens(element);
+    if (tokens.has(token)) {
+      tokens.delete(token);
+    } else {
+      tokens.add(token);
+    }
+    element.style.textDecoration = Array.from(tokens).join(" ");
+    const previewElement = getSelectedPreviewElement();
+    if (previewElement) {
+      previewElement.style.textDecoration = element.style.textDecoration;
+    }
+    syncSourceFromDoc();
+    pushHistory(sourceEditor.value);
+    updateTextDecorationButtonStates(element);
+    refreshSelectedMetadata();
   });
 }
 
@@ -269,6 +333,7 @@ function handleShortcuts(event) {
 }
 
 function renderPreview(options = {}) {
+  const scrollToRestore = options.preserveScroll ? capturePreviewScroll() : null;
   const parser = new DOMParser();
   appState.sourceDoc = parser.parseFromString(sourceEditor.value, "text/html");
   ensureHtmlDocument(appState.sourceDoc);
@@ -281,6 +346,9 @@ function renderPreview(options = {}) {
       if (options.keepSelection && appState.selectedEditorId) {
         previewFrame.contentWindow?.__selectEditorElement?.(appState.selectedEditorId);
         updateInspector();
+      }
+      if (scrollToRestore) {
+        restorePreviewScroll(scrollToRestore);
       }
       updateCanvasScale();
     },
@@ -447,7 +515,7 @@ function selectElement(editorId) {
   appState.selectedEditorId = editorId;
   previewFrame.contentWindow?.__selectEditorElement?.(editorId);
   updateInspector();
-  locateCurrentSourceRange(true);
+  locateCurrentSourceRange(false);
 }
 
 function updateInspector() {
@@ -494,6 +562,8 @@ function updateInspector() {
     if (controlName === "color" || controlName === "background") continue;
     controls[controlName].value = element.style[styleName] || "";
   }
+  updateFormatButtonState(controls.italic, element.style.fontStyle || getComputedPreviewStyle("fontStyle") || "", "italic");
+  updateTextDecorationButtonStates(element);
 
   selectionLabel.textContent = `已选中：${label}`;
   breadcrumbBar.textContent = path;
@@ -677,6 +747,28 @@ function getSelectedSourceElement() {
   return appState.sourceDoc.querySelector(`[data-editor-id="${appState.selectedEditorId}"]`);
 }
 
+function getSelectedPreviewElement() {
+  return previewFrame.contentDocument?.querySelector(`[data-editor-id="${appState.selectedEditorId}"]`) || null;
+}
+
+function refreshSelectedMetadata() {
+  const element = getSelectedSourceElement();
+  if (!element) return;
+
+  const label = getElementLabel(element);
+  const path = getElementPath(element);
+  const range = findSourceRangeForElement(element);
+  appState.selectedRange = range;
+
+  controls.selectedSummary.textContent = label;
+  controls.elementPath.value = path;
+  controls.elementSize.value = getSelectionSize();
+  controls.sourceRange.value = range ? `${range.start} - ${range.end}` : "未找到对应源码";
+  selectionLabel.textContent = `已选中：${label}`;
+  breadcrumbBar.textContent = path;
+  sourceSelectionInfo.textContent = range ? `源码已定位：${label}` : `源码定位失败：${label}`;
+}
+
 function syncSourceFromDoc() {
   if (!appState.sourceDoc) return;
   const cleanDoc = getCleanSourceDoc();
@@ -694,6 +786,96 @@ function applyWorkspaceState() {
   workspace.classList.toggle("source-collapsed", appState.sourceCollapsed);
   sourceToggleBtn.title = appState.sourceCollapsed ? "展开源码" : "收起源码";
   sourceToggleBtn.setAttribute("aria-label", sourceToggleBtn.title);
+  sourceRailBtn.title = sourceToggleBtn.title;
+  sourceRailBtn.setAttribute("aria-label", sourceToggleBtn.title);
+}
+
+function capturePreviewScroll() {
+  const win = previewFrame.contentWindow;
+  const doc = previewFrame.contentDocument;
+  if (!win || !doc) return structuredCloneSafe(appState.previewScroll);
+
+  const scrollingElement = doc.scrollingElement || doc.documentElement;
+  const scrolledElements = Array.from(doc.body?.querySelectorAll("*") || [])
+    .filter((element) => element.scrollTop || element.scrollLeft)
+    .slice(0, 40)
+    .map((element) => ({
+      editorId: element.dataset.editorId || "",
+      path: getElementIndexPath(element),
+      x: element.scrollLeft,
+      y: element.scrollTop,
+    }));
+
+  appState.previewScroll = {
+    stage: {
+      x: previewStage.scrollLeft,
+      y: previewStage.scrollTop,
+    },
+    frame: {
+      x: win.scrollX || scrollingElement.scrollLeft || 0,
+      y: win.scrollY || scrollingElement.scrollTop || 0,
+      scrollingX: scrollingElement.scrollLeft || 0,
+      scrollingY: scrollingElement.scrollTop || 0,
+    },
+    elements: scrolledElements,
+  };
+  return structuredCloneSafe(appState.previewScroll);
+}
+
+function restorePreviewScroll(scroll) {
+  const win = previewFrame.contentWindow;
+  const doc = previewFrame.contentDocument;
+  if (!win || !doc) return;
+
+  const restore = () => {
+    if (scroll.stage) {
+      previewStage.scrollLeft = scroll.stage.x || 0;
+      previewStage.scrollTop = scroll.stage.y || 0;
+    }
+
+    const scrollingElement = doc.scrollingElement || doc.documentElement;
+    if (scroll.frame) {
+      win.scrollTo(scroll.frame.x || 0, scroll.frame.y || 0);
+      scrollingElement.scrollLeft = scroll.frame.scrollingX || scroll.frame.x || 0;
+      scrollingElement.scrollTop = scroll.frame.scrollingY || scroll.frame.y || 0;
+    }
+
+    for (const item of scroll.elements || []) {
+      const element =
+        (item.editorId && doc.querySelector(`[data-editor-id="${item.editorId}"]`)) ||
+        getElementByIndexPath(doc, item.path);
+      if (!element) continue;
+      element.scrollLeft = item.x || 0;
+      element.scrollTop = item.y || 0;
+    }
+  };
+
+  restore();
+  window.requestAnimationFrame(restore);
+  window.setTimeout(restore, 80);
+  window.setTimeout(restore, 220);
+}
+
+function structuredCloneSafe(value) {
+  return JSON.parse(JSON.stringify(value || {}));
+}
+
+function updateFormatButtonState(button, value, activeValue) {
+  const isActive = value === activeValue;
+  button.classList.toggle("is-active", isActive);
+  button.setAttribute("aria-pressed", String(isActive));
+}
+
+function updateTextDecorationButtonStates(element) {
+  const tokens = getTextDecorationTokens(element);
+  updateFormatButtonState(controls.underline, tokens.has("underline") ? "underline" : "", "underline");
+  updateFormatButtonState(controls.strike, tokens.has("line-through") ? "line-through" : "", "line-through");
+}
+
+function getTextDecorationTokens(element) {
+  const explicit = element.style.textDecoration || "";
+  const computed = getComputedPreviewStyle("textDecorationLine") || getComputedPreviewStyle("textDecoration") || "";
+  return new Set(`${explicit} ${computed}`.split(/\s+/).filter((token) => token && token !== "none"));
 }
 
 function setCanvasMode(mode) {

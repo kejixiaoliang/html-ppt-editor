@@ -41,8 +41,12 @@
 
       <main id="workspace" class="workspace source-collapsed">
         <section class="panel source-panel" aria-label="源码编辑区">
+          <button id="sourceRailBtn" class="source-rail-button" type="button" aria-label="展开源码" title="展开源码">
+            <span aria-hidden="true">›</span>
+            源码
+          </button>
           <div class="panel-header">
-            <div>
+            <div class="panel-title">
               <strong>源码</strong>
               <span id="sourceSelectionInfo">未选中元素</span>
             </div>
@@ -127,18 +131,10 @@
                   <input id="elementSizeInput" type="text" disabled />
                 </label>
               </div>
-              <label>
-                源码位置
-                <input id="sourceRangeInput" type="text" disabled />
-              </label>
-              <label>
-                元素路径
-                <input id="elementPathInput" type="text" disabled />
-              </label>
             </section>
 
             <section class="card">
-              <div class="card-title">层级选择</div>
+              <div class="card-title">选区</div>
               <div id="ancestorList" class="chip-list"></div>
               <div id="childrenList" class="chip-list"></div>
             </section>
@@ -159,8 +155,8 @@
               </label>
             </section>
 
-            <section class="card">
-              <div class="card-title">标识</div>
+            <details class="card advanced-card">
+              <summary class="card-title">标识</summary>
               <label>
                 id
                 <input id="idInput" type="text" />
@@ -169,10 +165,15 @@
                 class
                 <input id="classInput" type="text" />
               </label>
-            </section>
+            </details>
 
             <section class="card">
               <div class="card-title">文字</div>
+              <div class="format-toolbar" aria-label="文字格式">
+                <button id="italicBtn" class="format-button" type="button" aria-pressed="false" title="斜体">I</button>
+                <button id="underlineBtn" class="format-button" type="button" aria-pressed="false" title="下划线">U</button>
+                <button id="strikeBtn" class="format-button" type="button" aria-pressed="false" title="删除线">S</button>
+              </div>
               <div class="field-grid">
                 <label>
                   文字颜色
@@ -195,6 +196,32 @@
                   <option value="800">800</option>
                 </select>
               </label>
+              <div class="field-grid">
+                <label>
+                  对齐
+                  <select id="textAlignInput">
+                    <option value="">默认</option>
+                    <option value="left">左对齐</option>
+                    <option value="center">居中</option>
+                    <option value="right">右对齐</option>
+                    <option value="justify">两端对齐</option>
+                  </select>
+                </label>
+                <label>
+                  行高
+                  <input id="lineHeightInput" type="text" placeholder="1.5 / 36px" />
+                </label>
+              </div>
+              <div class="field-grid">
+                <label>
+                  字体
+                  <input id="fontFamilyInput" type="text" placeholder='Microsoft YaHei' />
+                </label>
+                <label>
+                  字间距
+                  <input id="letterSpacingInput" type="text" placeholder="0.04em / 2px" />
+                </label>
+              </div>
             </section>
 
             <section class="card">
@@ -219,8 +246,8 @@
               </label>
             </section>
 
-            <section class="card">
-              <div class="card-title">尺寸与间距</div>
+            <details class="card advanced-card">
+              <summary class="card-title">高级布局</summary>
               <div class="field-grid">
                 <label>
                   宽度
@@ -245,7 +272,19 @@
                 transform
                 <input id="transformInput" type="text" placeholder="translateY(-4px)" />
               </label>
-            </section>
+            </details>
+
+            <details class="card advanced-card">
+              <summary class="card-title">源码与标识</summary>
+              <label>
+                源码位置
+                <input id="sourceRangeInput" type="text" disabled />
+              </label>
+              <label>
+                元素路径
+                <input id="elementPathInput" type="text" disabled />
+              </label>
+            </details>
           </form>
         </aside>
       </main>
