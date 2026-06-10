@@ -51,6 +51,17 @@
         </div>
       </header>
 
+      <div id="draftBar" class="draft-bar hidden" role="status">
+        <div>
+          <strong>发现本地草稿</strong>
+          <span id="draftInfo">可以恢复上次未导出的编辑内容。</span>
+        </div>
+        <div class="draft-actions">
+          <button id="restoreDraftBtn" class="text-button" type="button">恢复草稿</button>
+          <button id="discardDraftBtn" class="text-button" type="button">放弃</button>
+        </div>
+      </div>
+
       <main id="workspace" class="workspace source-collapsed">
         <section class="panel source-panel" aria-label="源码编辑区">
           <button id="sourceRailBtn" class="source-rail-button" type="button" aria-label="展开源码" title="展开源码">
@@ -107,6 +118,35 @@
                   sandbox="allow-scripts allow-same-origin"
                 ></iframe>
               </div>
+            </div>
+            <div id="floatingToolbar" class="floating-toolbar hidden" aria-label="快捷编辑工具">
+              <span id="toolbarSelectionLabel" class="toolbar-chip">body</span>
+              <span class="toolbar-divider" aria-hidden="true"></span>
+              <span class="toolbar-group" aria-label="文字格式">
+                <button class="quick-button" type="button" data-quick-action="bold" title="加粗">B</button>
+                <button class="quick-button" type="button" data-quick-action="italic" title="斜体">I</button>
+                <button class="quick-button" type="button" data-quick-action="underline" title="下划线">U</button>
+                <button class="quick-button" type="button" data-quick-action="strike" title="删除线">S</button>
+              </span>
+              <span class="toolbar-group" aria-label="字号">
+                <button class="quick-button" type="button" data-quick-action="font-down" title="字号减小">A-</button>
+                <button class="quick-button" type="button" data-quick-action="font-up" title="字号增大">A+</button>
+              </span>
+              <span class="toolbar-group" aria-label="对齐">
+                <button class="quick-button" type="button" data-quick-action="align-left" title="左对齐">左</button>
+                <button class="quick-button" type="button" data-quick-action="align-center" title="居中">中</button>
+                <button class="quick-button" type="button" data-quick-action="align-right" title="右对齐">右</button>
+              </span>
+              <span class="toolbar-group" aria-label="颜色">
+                <button class="quick-swatch swatch-accent" type="button" data-quick-action="accent-color" title="强调文字"></button>
+                <button class="quick-swatch swatch-soft" type="button" data-quick-action="soft-background" title="柔和底色"></button>
+              </span>
+              <span class="toolbar-divider" aria-hidden="true"></span>
+              <span class="toolbar-group" aria-label="样式操作">
+                <button class="quick-button quick-text" type="button" data-quick-action="copy-style" title="复制当前元素的行内样式">复制</button>
+                <button class="quick-button quick-text" type="button" data-quick-action="paste-style" title="粘贴已复制的行内样式">粘贴</button>
+                <button class="quick-button quick-text" type="button" data-quick-action="clear-style" title="清除当前元素的行内样式">清除</button>
+              </span>
             </div>
           </div>
 

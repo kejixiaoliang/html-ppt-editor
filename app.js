@@ -27,6 +27,15 @@ const slideViewport = document.querySelector("#slideViewport");
 const canvasInfo = document.querySelector("#canvasInfo");
 const canvasModeButtons = document.querySelectorAll("[data-canvas-mode]");
 const zoomModeButtons = document.querySelectorAll("[data-zoom-mode]");
+const floatingToolbar = document.querySelector("#floatingToolbar");
+const toolbarSelectionLabel = document.querySelector("#toolbarSelectionLabel");
+const quickActionButtons = document.querySelectorAll("[data-quick-action]");
+const draftBar = document.querySelector("#draftBar");
+const draftInfo = document.querySelector("#draftInfo");
+const restoreDraftBtn = document.querySelector("#restoreDraftBtn");
+const discardDraftBtn = document.querySelector("#discardDraftBtn");
+
+const draftStorageKey = "html-studio:draft:v1";
 
 const controls = {
   selectedSummary: document.querySelector("#selectedSummary"),
@@ -107,7 +116,7 @@ const sampleHtml = `<!doctype html>
       }
 
       .eyebrow {
-        color: #6f7f3f;
+        color: #b66a58;
         font-size: 18px;
         font-weight: 800;
       }
@@ -166,6 +175,7 @@ const appState = {
   selectedRange: null,
   updatingInspector: false,
   renderTimer: null,
+  autosaveTimer: null,
   previewScroll: { x: 0, y: 0 },
   history: [],
   historyIndex: -1,
@@ -173,9 +183,12 @@ const appState = {
   canvasMode: "16:9",
   zoomMode: "fit",
   resizeObserver: null,
+  sourceLabel: "示例",
+  copiedInlineStyle: "",
 };
 
 function init() {
+  setAppViewportHeight();
   sourceEditor.value = sampleHtml;
   pushHistory(sampleHtml, { replace: true });
   bindEvents();
@@ -183,6 +196,8 @@ function init() {
   applyWorkspaceState();
   applyCanvasState();
   renderPreview();
+  showDraftPromptIfAvailable();
+  stabilizeInitialLayout();
 }
 
 function bindEvents() {
@@ -193,6 +208,7 @@ function bindEvents() {
     appState.renderTimer = window.setTimeout(() => {
       pushHistory(sourceEditor.value);
       renderPreview();
+      scheduleAutosave();
     }, 450);
   });
 
@@ -207,8 +223,20 @@ function bindEvents() {
   sourceRailBtn.addEventListener("click", toggleSourcePanel);
   selectParentBtn.addEventListener("click", selectParentElement);
   clearSelectionBtn.addEventListener("click", clearSelection);
+  restoreDraftBtn.addEventListener("click", restoreDraft);
+  discardDraftBtn.addEventListener("click", discardDraft);
   document.addEventListener("keydown", handleShortcuts);
-  window.addEventListener("resize", () => updateCanvasScale());
+  window.addEventListener("resize", () => {
+    setAppViewportHeight();
+    updateCanvasScale();
+    positionFloatingToolbar();
+  });
+
+  window.visualViewport?.addEventListener("resize", () => {
+    setAppViewportHeight();
+    updateCanvasScale();
+    positionFloatingToolbar();
+  });
 
   canvasModeButtons.forEach((button) => {
     button.addEventListener("click", () => setCanvasMode(button.dataset.canvasMode));
@@ -216,6 +244,10 @@ function bindEvents() {
 
   zoomModeButtons.forEach((button) => {
     button.addEventListener("click", () => setZoomMode(button.dataset.zoomMode));
+  });
+
+  quickActionButtons.forEach((button) => {
+    button.addEventListener("click", () => applyQuickAction(button.dataset.quickAction));
   });
 
   window.addEventListener("message", (event) => {
@@ -252,70 +284,219 @@ function bindEvents() {
 
 function bindInspectorControl(control, applyChange, options = {}) {
   control.addEventListener("input", () => {
-    if (appState.updatingInspector || !appState.selectedEditorId) {
-      return;
-    }
-
-    const element = getSelectedSourceElement();
-    if (!element) {
-      return;
-    }
-
-    const sourceRange = findSourceRangeForElement(element);
-    applyChange(element, control.value.trim());
-    const previewElement = getSelectedPreviewElement();
-    if (previewElement) {
-      applyChange(previewElement, control.value.trim());
-    }
-    syncElementToSource(element, sourceRange, options.patch || "outer");
-    pushHistory(sourceEditor.value);
-    refreshSelectedMetadata();
+    if (appState.updatingInspector) return;
+    applySelectedElementChange({
+      patch: options.patch || "outer",
+      mutate: (element) => applyChange(element, control.value.trim()),
+    });
   });
 }
 
 function bindStyleToggle(button, styleName, activeValue) {
   button.addEventListener("click", () => {
-    if (appState.updatingInspector || !appState.selectedEditorId) return;
-    const element = getSelectedSourceElement();
-    if (!element) return;
-
-    const sourceRange = findSourceRangeForElement(element);
-    const isActive = element.style[styleName] === activeValue || getComputedPreviewStyle(styleName) === activeValue;
-    element.style[styleName] = isActive ? "" : activeValue;
-    const previewElement = getSelectedPreviewElement();
-    if (previewElement) {
-      previewElement.style[styleName] = element.style[styleName];
-    }
-    syncElementToSource(element, sourceRange, "opening");
-    pushHistory(sourceEditor.value);
-    updateFormatButtonState(button, element.style[styleName], activeValue);
-    refreshSelectedMetadata();
+    applySelectedElementChange({
+      patch: "opening",
+      mutate: (element) => {
+        const isActive = element.style[styleName] === activeValue || getComputedPreviewStyle(styleName) === activeValue;
+        element.style[styleName] = isActive ? "" : activeValue;
+      },
+      after: (element) => updateFormatButtonState(button, element.style[styleName], activeValue),
+    });
   });
 }
 
 function bindTextDecorationToggle(button, token) {
   button.addEventListener("click", () => {
-    if (appState.updatingInspector || !appState.selectedEditorId) return;
-    const element = getSelectedSourceElement();
-    if (!element) return;
-
-    const sourceRange = findSourceRangeForElement(element);
-    const tokens = getTextDecorationTokens(element);
-    if (tokens.has(token)) {
-      tokens.delete(token);
-    } else {
-      tokens.add(token);
-    }
-    element.style.textDecoration = Array.from(tokens).join(" ");
-    const previewElement = getSelectedPreviewElement();
-    if (previewElement) {
-      previewElement.style.textDecoration = element.style.textDecoration;
-    }
-    syncElementToSource(element, sourceRange, "opening");
-    pushHistory(sourceEditor.value);
-    updateTextDecorationButtonStates(element);
-    refreshSelectedMetadata();
+    applySelectedElementChange({
+      patch: "opening",
+      mutate: (element) => {
+        const tokens = getTextDecorationTokens(element);
+        if (tokens.has(token)) {
+          tokens.delete(token);
+        } else {
+          tokens.add(token);
+        }
+        element.style.textDecoration = Array.from(tokens).join(" ");
+      },
+      after: updateTextDecorationButtonStates,
+    });
   });
+}
+
+function applySelectedElementChange({ patch = "opening", mutate, after }) {
+  if (!appState.selectedEditorId) return false;
+  const element = getSelectedSourceElement();
+  if (!element) return false;
+
+  const sourceRange = findSourceRangeForElement(element);
+  mutate(element);
+
+  const previewElement = getSelectedPreviewElement();
+  if (previewElement) {
+    mutate(previewElement);
+  }
+
+  const synced = syncElementToSource(element, sourceRange, patch);
+  if (!synced) return false;
+
+  pushHistory(sourceEditor.value);
+  if (after) after(element);
+  refreshSelectedMetadata();
+  positionFloatingToolbar();
+  scheduleAutosave();
+  return true;
+}
+
+function applyQuickAction(action) {
+  if (action === "copy-style") {
+    copySelectedInlineStyle();
+    return;
+  }
+
+  if (action === "paste-style") {
+    pasteSelectedInlineStyle();
+    return;
+  }
+
+  if (action === "clear-style") {
+    clearSelectedInlineStyle();
+    return;
+  }
+
+  const actionMap = {
+    bold: (element) => {
+      const current = element.style.fontWeight || getComputedPreviewStyle("fontWeight");
+      element.style.fontWeight = Number(current) >= 700 || current === "bold" ? "" : "700";
+    },
+    italic: (element) => {
+      element.style.fontStyle = element.style.fontStyle === "italic" ? "" : "italic";
+    },
+    underline: (element) => toggleDecorationToken(element, "underline"),
+    strike: (element) => toggleDecorationToken(element, "line-through"),
+    "font-down": (element) => nudgeFontSize(element, -2),
+    "font-up": (element) => nudgeFontSize(element, 2),
+    "align-left": (element) => {
+      element.style.textAlign = "left";
+    },
+    "align-center": (element) => {
+      element.style.textAlign = "center";
+    },
+    "align-right": (element) => {
+      element.style.textAlign = "right";
+    },
+    "accent-color": (element) => {
+      element.style.color = "#b66a58";
+    },
+    "soft-background": (element) => {
+      element.style.backgroundColor = "#f8e8e4";
+    },
+  };
+
+  const mutate = actionMap[action];
+  if (!mutate) return;
+  applySelectedElementChange({
+    patch: "opening",
+    mutate,
+    after: (element) => {
+      updateInspectorControlValues(element);
+      updateFormatButtonState(controls.italic, element.style.fontStyle || getComputedPreviewStyle("fontStyle") || "", "italic");
+      updateTextDecorationButtonStates(element);
+      updateFloatingToolbarState(element);
+    },
+  });
+}
+
+function copySelectedInlineStyle() {
+  const element = getSelectedSourceElement();
+  if (!element) return;
+
+  appState.copiedInlineStyle = element.getAttribute("style") || "";
+  setSourceStatus(appState.copiedInlineStyle ? "已复制当前元素样式" : "当前元素没有可复制的行内样式");
+  updateFloatingToolbarState(element);
+}
+
+function pasteSelectedInlineStyle() {
+  if (!appState.copiedInlineStyle) {
+    setSourceStatus("还没有复制样式");
+    updateFloatingToolbarState();
+    return;
+  }
+
+  applySelectedElementChange({
+    patch: "opening",
+    mutate: (element) => {
+      element.setAttribute("style", appState.copiedInlineStyle);
+    },
+    after: (element) => {
+      updateInspectorControlValues(element);
+      updateFloatingToolbarState(element);
+    },
+  });
+}
+
+function clearSelectedInlineStyle() {
+  applySelectedElementChange({
+    patch: "opening",
+    mutate: (element) => {
+      element.removeAttribute("style");
+    },
+    after: (element) => {
+      updateInspectorControlValues(element);
+      updateFormatButtonState(controls.italic, "", "italic");
+      updateTextDecorationButtonStates(element);
+      updateFloatingToolbarState(element);
+    },
+  });
+}
+
+function updateFloatingToolbarState(element = getSelectedSourceElement()) {
+  if (!floatingToolbar) return;
+
+  const label = element ? getElementLabel(element) : "body";
+  if (toolbarSelectionLabel) {
+    toolbarSelectionLabel.textContent = label;
+  }
+
+  const previewElement = getSelectedPreviewElement();
+  const previewStyle = previewElement ? previewFrame.contentWindow?.getComputedStyle(previewElement) : null;
+  const inlineStyle = element?.style;
+  const decorationTokens = element ? getTextDecorationTokens(element) : new Set();
+
+  setQuickActionActive("bold", Boolean(previewStyle && (Number(previewStyle.fontWeight) >= 700 || previewStyle.fontWeight === "bold")));
+  setQuickActionActive("italic", inlineStyle?.fontStyle === "italic" || previewStyle?.fontStyle === "italic");
+  setQuickActionActive("underline", decorationTokens.has("underline"));
+  setQuickActionActive("strike", decorationTokens.has("line-through"));
+  setQuickActionActive("align-left", inlineStyle?.textAlign === "left" || previewStyle?.textAlign === "left");
+  setQuickActionActive("align-center", inlineStyle?.textAlign === "center" || previewStyle?.textAlign === "center");
+  setQuickActionActive("align-right", inlineStyle?.textAlign === "right" || previewStyle?.textAlign === "right");
+
+  const pasteButton = floatingToolbar.querySelector('[data-quick-action="paste-style"]');
+  if (pasteButton) {
+    pasteButton.disabled = !appState.copiedInlineStyle;
+  }
+}
+
+function setQuickActionActive(action, isActive) {
+  const button = floatingToolbar?.querySelector(`[data-quick-action="${action}"]`);
+  if (!button) return;
+  button.classList.toggle("is-active", Boolean(isActive));
+  button.setAttribute("aria-pressed", String(Boolean(isActive)));
+}
+
+function toggleDecorationToken(element, token) {
+  const tokens = getTextDecorationTokens(element);
+  if (tokens.has(token)) {
+    tokens.delete(token);
+  } else {
+    tokens.add(token);
+  }
+  element.style.textDecoration = Array.from(tokens).join(" ");
+}
+
+function nudgeFontSize(element, delta) {
+  const raw = element.style.fontSize || getComputedPreviewStyle("fontSize") || "16px";
+  const current = Number.parseFloat(raw) || 16;
+  element.style.fontSize = `${Math.max(8, Math.round(current + delta))}px`;
 }
 
 function handleShortcuts(event) {
@@ -346,9 +527,43 @@ function handleShortcuts(event) {
 function observeLayoutChanges() {
   if (!window.ResizeObserver) return;
   appState.resizeObserver = new ResizeObserver(() => {
-    window.requestAnimationFrame(updateCanvasScale);
+    window.requestAnimationFrame(() => {
+      setAppViewportHeight();
+      updateCanvasScale();
+      positionFloatingToolbar();
+    });
   });
+  const topbar = document.querySelector(".topbar");
+  if (topbar) appState.resizeObserver.observe(topbar);
+  if (draftBar) appState.resizeObserver.observe(draftBar);
+  if (workspace) appState.resizeObserver.observe(workspace);
   appState.resizeObserver.observe(previewStage);
+}
+
+function setAppViewportHeight() {
+  const viewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight);
+  document.documentElement.style.setProperty("--app-height", `${viewportHeight}px`);
+  setWorkspaceHeight(viewportHeight);
+}
+
+function setWorkspaceHeight(viewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight)) {
+  if (!workspace) return;
+  const topbar = document.querySelector(".topbar");
+  const topbarHeight = topbar?.getBoundingClientRect().height || 66;
+  const draftHeight = draftBar && !draftBar.classList.contains("hidden") ? draftBar.getBoundingClientRect().height : 0;
+  const availableHeight = Math.max(420, Math.floor(viewportHeight - topbarHeight - draftHeight));
+  document.documentElement.style.setProperty("--workspace-height", `${availableHeight}px`);
+}
+
+function stabilizeInitialLayout() {
+  const frames = [0, 80, 220, 520];
+  frames.forEach((delay) => {
+    window.setTimeout(() => {
+      setAppViewportHeight();
+      updateCanvasScale();
+      positionFloatingToolbar();
+    }, delay);
+  });
 }
 
 function renderPreview(options = {}) {
@@ -369,7 +584,10 @@ function renderPreview(options = {}) {
       if (scrollToRestore) {
         restorePreviewScroll(scrollToRestore);
       }
+      previewFrame.contentWindow?.addEventListener("scroll", positionFloatingToolbar, { passive: true });
+      previewFrame.contentWindow?.addEventListener("resize", positionFloatingToolbar);
       updateCanvasScale();
+      positionFloatingToolbar();
     },
     { once: true },
   );
@@ -415,14 +633,14 @@ function injectPreviewBridge(doc) {
     }
 
     .__html_editor_hover__ {
-      outline: 2px solid #c07625 !important;
+      outline: 2px solid #c5944a !important;
       outline-offset: 2px !important;
     }
 
     .__html_editor_selected__ {
-      outline: 3px solid #6f7f3f !important;
+      outline: 3px solid #b66a58 !important;
       outline-offset: 3px !important;
-      box-shadow: 0 0 0 6px rgba(111, 127, 63, 0.18) !important;
+      box-shadow: 0 0 0 6px rgba(182, 106, 88, 0.18) !important;
     }
 
     .__html_editor_badge__ {
@@ -432,7 +650,7 @@ function injectPreviewBridge(doc) {
       padding: 5px 8px;
       border-radius: 6px;
       color: #fff;
-      background: #6f7f3f;
+      background: #b66a58;
       box-shadow: 0 8px 24px rgba(43, 38, 30, 0.22);
       font: 700 12px/1.2 "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
       pointer-events: none;
@@ -442,7 +660,7 @@ function injectPreviewBridge(doc) {
     }
 
     .__html_editor_badge__.__hover__ {
-      background: #c07625;
+      background: #c5944a;
     }
   `;
 
@@ -535,6 +753,7 @@ function selectElement(editorId) {
   previewFrame.contentWindow?.__selectEditorElement?.(editorId);
   updateInspector();
   locateCurrentSourceRange(false);
+  positionFloatingToolbar();
 }
 
 function updateInspector() {
@@ -577,10 +796,7 @@ function updateInspector() {
     element.style.backgroundColor || getComputedPreviewStyle("backgroundColor") || "#ffffff",
   );
 
-  for (const [controlName, styleName] of Object.entries(styleControlMap)) {
-    if (controlName === "color" || controlName === "background") continue;
-    controls[controlName].value = element.style[styleName] || "";
-  }
+  updateInspectorControlValues(element);
   updateFormatButtonState(controls.italic, element.style.fontStyle || getComputedPreviewStyle("fontStyle") || "", "italic");
   updateTextDecorationButtonStates(element);
 
@@ -589,6 +805,20 @@ function updateInspector() {
   sourceSelectionInfo.textContent = range ? `源码已定位：${label}` : `源码定位失败：${label}`;
   renderHierarchyControls(element);
 
+  appState.updatingInspector = false;
+}
+
+function updateInspectorControlValues(element) {
+  if (!element) return;
+  appState.updatingInspector = true;
+  controls.color.value = normalizeColor(element.style.color || getComputedPreviewStyle("color") || "#20231f");
+  controls.background.value = normalizeColor(
+    element.style.backgroundColor || getComputedPreviewStyle("backgroundColor") || "#ffffff",
+  );
+  for (const [controlName, styleName] of Object.entries(styleControlMap)) {
+    if (controlName === "color" || controlName === "background") continue;
+    controls[controlName].value = element.style[styleName] || "";
+  }
   appState.updatingInspector = false;
 }
 
@@ -786,6 +1016,38 @@ function refreshSelectedMetadata() {
   selectionLabel.textContent = `已选中：${label}`;
   breadcrumbBar.textContent = path;
   sourceSelectionInfo.textContent = range ? `源码已定位：${label}` : `源码定位失败：${label}`;
+  positionFloatingToolbar();
+}
+
+function positionFloatingToolbar() {
+  if (!floatingToolbar || !appState.selectedEditorId) {
+    floatingToolbar?.classList.add("hidden");
+    return;
+  }
+
+  const element = getSelectedPreviewElement();
+  if (!element) {
+    floatingToolbar.classList.add("hidden");
+    return;
+  }
+
+  updateFloatingToolbarState();
+  floatingToolbar.classList.remove("hidden");
+  const frameRect = previewFrame.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const toolbarRect = floatingToolbar.getBoundingClientRect();
+  const preferredLeft = frameRect.left + elementRect.left + elementRect.width / 2 - toolbarRect.width / 2;
+  const preferredTop = frameRect.top + elementRect.top - toolbarRect.height - 10;
+  const fallbackTop = frameRect.top + elementRect.bottom + 10;
+  const left = clamp(preferredLeft, 12, window.innerWidth - toolbarRect.width - 12);
+  const top = preferredTop > 12 ? preferredTop : clamp(fallbackTop, 12, window.innerHeight - toolbarRect.height - 12);
+
+  floatingToolbar.style.left = `${left}px`;
+  floatingToolbar.style.top = `${top}px`;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function syncElementToSource(element, previousRange, patchMode) {
@@ -983,12 +1245,14 @@ function setCanvasMode(mode) {
   if (!mode || appState.canvasMode === mode) return;
   appState.canvasMode = mode;
   applyCanvasState();
+  scheduleAutosave();
 }
 
 function setZoomMode(mode) {
   if (!mode || appState.zoomMode === mode) return;
   appState.zoomMode = mode;
   applyCanvasState();
+  scheduleAutosave();
 }
 
 function applyCanvasState() {
@@ -1141,16 +1405,20 @@ function handleFileUpload() {
   const reader = new FileReader();
   reader.onload = () => {
     sourceEditor.value = String(reader.result || "");
+    appState.sourceLabel = file.name || "上传文件";
     pushHistory(sourceEditor.value);
     renderPreview();
+    scheduleAutosave();
   };
   reader.readAsText(file);
 }
 
 function loadSample() {
   sourceEditor.value = sampleHtml;
+  appState.sourceLabel = "示例";
   pushHistory(sourceEditor.value);
   renderPreview();
+  scheduleAutosave();
 }
 
 function clearSelection() {
@@ -1161,6 +1429,7 @@ function clearSelection() {
 function clearSelectionState() {
   appState.selectedEditorId = null;
   appState.selectedRange = null;
+  floatingToolbar.classList.add("hidden");
   emptyInspector.classList.remove("hidden");
   inspectorForm.classList.add("hidden");
   clearSelectionBtn.disabled = true;
@@ -1188,6 +1457,7 @@ function restoreHistory() {
   sourceEditor.value = appState.history[appState.historyIndex];
   renderPreview();
   updateHistoryButtons();
+  scheduleAutosave();
 }
 
 function pushHistory(source, options = {}) {
@@ -1211,6 +1481,84 @@ function pushHistory(source, options = {}) {
 function updateHistoryButtons() {
   undoBtn.disabled = appState.historyIndex <= 0;
   redoBtn.disabled = appState.historyIndex >= appState.history.length - 1;
+}
+
+function scheduleAutosave() {
+  window.clearTimeout(appState.autosaveTimer);
+  sourceStatus.textContent = "保存中";
+  appState.autosaveTimer = window.setTimeout(saveDraft, 500);
+}
+
+function saveDraft() {
+  const selectedElement = getSelectedSourceElement();
+  const draft = {
+    source: sourceEditor.value,
+    sourceLabel: appState.sourceLabel,
+    savedAt: new Date().toISOString(),
+    canvasMode: appState.canvasMode,
+    zoomMode: appState.zoomMode,
+    selectedPath: selectedElement ? getElementIndexPath(selectedElement) : [],
+  };
+
+  try {
+    localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+    sourceStatus.textContent = "已自动保存";
+  } catch (error) {
+    sourceStatus.textContent = "草稿过大，请导出";
+  }
+}
+
+function showDraftPromptIfAvailable() {
+  const draft = readDraft();
+  if (!draft || !draft.source || draft.source === sourceEditor.value) return;
+  draftInfo.textContent = `${draft.sourceLabel || "未命名文件"} · ${formatDraftTime(draft.savedAt)}`;
+  draftBar.classList.remove("hidden");
+  setAppViewportHeight();
+  updateCanvasScale();
+}
+
+function restoreDraft() {
+  const draft = readDraft();
+  if (!draft?.source) return;
+
+  sourceEditor.value = draft.source;
+  appState.sourceLabel = draft.sourceLabel || "本地草稿";
+  appState.canvasMode = draft.canvasMode || "16:9";
+  appState.zoomMode = draft.zoomMode || "fit";
+  pushHistory(sourceEditor.value, { replace: true });
+  applyCanvasState();
+  renderPreview();
+  draftBar.classList.add("hidden");
+  setAppViewportHeight();
+  setSourceStatus("草稿已恢复");
+}
+
+function discardDraft() {
+  localStorage.removeItem(draftStorageKey);
+  draftBar.classList.add("hidden");
+  setAppViewportHeight();
+  updateCanvasScale();
+  setSourceStatus("草稿已放弃");
+}
+
+function readDraft() {
+  try {
+    return JSON.parse(localStorage.getItem(draftStorageKey) || "null");
+  } catch (error) {
+    return null;
+  }
+}
+
+function formatDraftTime(value) {
+  if (!value) return "刚刚保存";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "刚刚保存";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function downloadHtml() {

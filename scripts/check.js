@@ -11,17 +11,32 @@ const requiredSnippets = {
     'id="italicBtn"',
     'id="underlineBtn"',
     'id="strikeBtn"',
-    "公众号",
+    'id="floatingToolbar"',
+    'id="toolbarSelectionLabel"',
+    'class="toolbar-group"',
+    'class="toolbar-divider"',
+    'data-quick-action="copy-style"',
+    'data-quick-action="paste-style"',
+    'data-quick-action="clear-style"',
+    'id="draftBar"',
     "科技小亮AGI",
     "https://github.com/kejixiaoliang",
     "sandbox",
     "导出 HTML",
   ],
   "styles.css": [
+    "--app-height",
+    "--workspace-height",
     ".workspace.source-collapsed",
     ".source-rail-button",
     ".developer-strip",
     ".github-link",
+    ".floating-toolbar",
+    ".toolbar-chip",
+    ".toolbar-group",
+    ".toolbar-divider",
+    ".quick-button.is-active",
+    ".draft-bar",
     ".format-toolbar",
     ".preview-stage",
     "overflow: hidden",
@@ -29,7 +44,18 @@ const requiredSnippets = {
     "@media (max-width: 920px)",
   ],
   "app.js": [
+    "function setAppViewportHeight",
+    "function setWorkspaceHeight",
+    "function stabilizeInitialLayout",
     "function syncElementToSource",
+    "function applySelectedElementChange",
+    "function positionFloatingToolbar",
+    "function updateFloatingToolbarState",
+    "function copySelectedInlineStyle",
+    "function pasteSelectedInlineStyle",
+    "function clearSelectedInlineStyle",
+    "function scheduleAutosave",
+    "function restoreDraft",
     "function findElementContentRange",
     "new Blob([sourceEditor.value]",
     "function observeLayoutChanges",
@@ -43,6 +69,7 @@ const requiredSnippets = {
   ],
   "server/index.js": ["/health", "text/html;charset=utf-8"],
   "README.md": ["npm start", "http://localhost:5178", "导出 HTML"],
+  "docs/deploy-baota.md": ["腾讯云轻量服务器", "宝塔面板", "子域名", "SSL", "/www/wwwroot"],
 };
 
 for (const [file, snippets] of Object.entries(requiredSnippets)) {
@@ -55,7 +82,7 @@ for (const [file, snippets] of Object.entries(requiredSnippets)) {
 }
 
 const html = fs.readFileSync("index.html", "utf8");
-if (html.includes("<span aria-hidden=\"true\">↑</span>")) {
+if (html.includes('<span aria-hidden="true">→</span>')) {
   throw new Error("Upload button should not contain the old arrow icon.");
 }
 
@@ -67,15 +94,32 @@ if (duplicates.length) {
 
 const app = fs.readFileSync("app.js", "utf8");
 const styles = fs.readFileSync("styles.css", "utf8");
-const forbiddenAppSnippets = [
+const readme = fs.readFileSync("README.md", "utf8");
+
+const forbiddenSourceRewriteSnippets = [
   "function syncSourceFromDoc",
   "function formatHtmlForMvp",
   "formatHtmlForMvp(",
   "new Blob([`<!doctype html>\\n${doc.documentElement.outerHTML}`",
 ];
-for (const snippet of forbiddenAppSnippets) {
+for (const snippet of forbiddenSourceRewriteSnippets) {
   if (app.includes(snippet)) {
     throw new Error(`app.js contains forbidden source-rewriting snippet: ${snippet}`);
+  }
+}
+
+const forbiddenQuickStyleSnippets = [
+  "快速样式",
+  "data-preset",
+  "presetButtons",
+  "applyStylePreset",
+  "preset-card",
+  "preset-grid",
+  "preset-button",
+];
+for (const snippet of forbiddenQuickStyleSnippets) {
+  if (html.includes(snippet) || app.includes(snippet) || styles.includes(snippet) || readme.includes(snippet)) {
+    throw new Error(`Quick style preset feature should be removed: ${snippet}`);
   }
 }
 
@@ -84,12 +128,22 @@ const forbiddenClassicTechColors = [
   "#0d3f9f",
   "#2563eb",
   "#1d4ed8",
+  "#6f7f3f",
+  "#4e5f2d",
   "20, 86, 217",
   "37, 99, 235",
+  "111, 127, 63",
 ];
 for (const color of forbiddenClassicTechColors) {
   if (styles.includes(color) || app.includes(color)) {
-    throw new Error(`Classic blue/purple tech color should not be used: ${color}`);
+    throw new Error(`Classic blue/purple/dead-green tech color should not be used: ${color}`);
+  }
+}
+
+const requiredPaletteSnippets = ["--accent: #b66a58", "--select: #c5944a", "--bg: #eef0ee"];
+for (const snippet of requiredPaletteSnippets) {
+  if (!styles.includes(snippet)) {
+    throw new Error(`Expected refined palette snippet missing: ${snippet}`);
   }
 }
 
