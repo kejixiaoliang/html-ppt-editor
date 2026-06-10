@@ -129,7 +129,25 @@
                 <button class="quick-button" type="button" data-quick-action="strike" title="删除线">S</button>
               </span>
               <span class="toolbar-group" aria-label="字号">
+                <select id="quickTextPresetSelect" class="quick-select" data-quick-select="text-preset" title="文字级别" aria-label="文字级别">
+                  <option value="">样式</option>
+                  <option value="title">标题</option>
+                  <option value="subtitle">副标题</option>
+                  <option value="body">正文</option>
+                  <option value="caption">注释</option>
+                </select>
                 <button class="quick-button" type="button" data-quick-action="font-down" title="字号减小">A-</button>
+                <input
+                  id="quickFontSizeInput"
+                  class="quick-number"
+                  type="number"
+                  min="8"
+                  max="240"
+                  step="1"
+                  data-quick-input="font-size"
+                  aria-label="字号"
+                  title="自定义字号"
+                />
                 <button class="quick-button" type="button" data-quick-action="font-up" title="字号增大">A+</button>
               </span>
               <span class="toolbar-group" aria-label="对齐">
@@ -140,6 +158,19 @@
               <span class="toolbar-group" aria-label="颜色">
                 <button class="quick-swatch swatch-accent" type="button" data-quick-action="accent-color" title="强调文字"></button>
                 <button class="quick-swatch swatch-soft" type="button" data-quick-action="soft-background" title="柔和底色"></button>
+                <label class="quick-color" title="自定义文字颜色" aria-label="自定义文字颜色">
+                  <span>字</span>
+                  <input id="quickTextColorInput" type="color" data-quick-input="color" data-style-prop="color" />
+                </label>
+                <label class="quick-color" title="自定义背景色" aria-label="自定义背景色">
+                  <span>底</span>
+                  <input
+                    id="quickBackgroundColorInput"
+                    type="color"
+                    data-quick-input="color"
+                    data-style-prop="backgroundColor"
+                  />
+                </label>
               </span>
               <span class="toolbar-divider" aria-hidden="true"></span>
               <span class="toolbar-group" aria-label="样式操作">

@@ -41,6 +41,12 @@ const zoomModeButtons = document.querySelectorAll("[data-zoom-mode]");
 const floatingToolbar = document.querySelector("#floatingToolbar");
 const toolbarSelectionLabel = document.querySelector("#toolbarSelectionLabel");
 const quickActionButtons = document.querySelectorAll("[data-quick-action]");
+const quickInputControls = document.querySelectorAll("[data-quick-input]");
+const quickSelectControls = document.querySelectorAll("[data-quick-select]");
+const quickTextColorInput = document.querySelector("#quickTextColorInput");
+const quickBackgroundColorInput = document.querySelector("#quickBackgroundColorInput");
+const quickFontSizeInput = document.querySelector("#quickFontSizeInput");
+const quickTextPresetSelect = document.querySelector("#quickTextPresetSelect");
 const draftBar = document.querySelector("#draftBar");
 const draftInfo = document.querySelector("#draftInfo");
 const restoreDraftBtn = document.querySelector("#restoreDraftBtn");
@@ -243,6 +249,15 @@ function bindEvents() {
     button.addEventListener("click", () => applyQuickAction(button.dataset.quickAction));
   });
 
+  quickInputControls.forEach((control) => {
+    control.addEventListener("input", () => applyQuickInput(control));
+    control.addEventListener("change", () => applyQuickInput(control));
+  });
+
+  quickSelectControls.forEach((control) => {
+    control.addEventListener("change", () => applyQuickTextPreset(control.value));
+  });
+
   window.addEventListener("message", (event) => {
     if (event.source !== previewFrame.contentWindow) {
       return;
@@ -399,6 +414,57 @@ function applyQuickAction(action) {
   });
 }
 
+function applyQuickInput(control) {
+  if (!control || !appState.selectedEditorId) return;
+
+  const inputType = control.dataset.quickInput;
+  const styleProp = control.dataset.styleProp;
+  applySelectedElementChange({
+    patch: "opening",
+    mutate: (element) => {
+      if (inputType === "font-size") {
+        const size = Number.parseInt(control.value, 10);
+        if (Number.isFinite(size)) {
+          element.style.fontSize = `${Math.max(8, Math.min(240, size))}px`;
+        }
+        return;
+      }
+
+      if (inputType === "color" && styleProp) {
+        element.style[styleProp] = control.value;
+      }
+    },
+    after: (element) => {
+      updateInspectorControlValues(element);
+      updateFloatingToolbarState(element);
+    },
+  });
+}
+
+function applyQuickTextPreset(preset) {
+  if (!preset) return;
+
+  const presetMap = {
+    title: { fontSize: "72px", fontWeight: "800", lineHeight: "1.04" },
+    subtitle: { fontSize: "34px", fontWeight: "700", lineHeight: "1.18" },
+    body: { fontSize: "20px", fontWeight: "400", lineHeight: "1.68" },
+    caption: { fontSize: "14px", fontWeight: "700", lineHeight: "1.42", letterSpacing: "0.04em" },
+  };
+  const styles = presetMap[preset];
+  if (!styles) return;
+
+  applySelectedElementChange({
+    patch: "opening",
+    mutate: (element) => {
+      Object.assign(element.style, styles);
+    },
+    after: (element) => {
+      updateInspectorControlValues(element);
+      updateFloatingToolbarState(element);
+    },
+  });
+}
+
 function copySelectedInlineStyle() {
   const element = getSelectedSourceElement();
   if (!element) return;
@@ -462,10 +528,34 @@ function updateFloatingToolbarState(element = getSelectedSourceElement()) {
   setQuickActionActive("align-left", inlineStyle?.textAlign === "left" || previewStyle?.textAlign === "left");
   setQuickActionActive("align-center", inlineStyle?.textAlign === "center" || previewStyle?.textAlign === "center");
   setQuickActionActive("align-right", inlineStyle?.textAlign === "right" || previewStyle?.textAlign === "right");
+  syncQuickToolbarControls(element, previewStyle);
 
   const pasteButton = floatingToolbar.querySelector('[data-quick-action="paste-style"]');
   if (pasteButton) {
     pasteButton.disabled = !appState.copiedInlineStyle;
+  }
+}
+
+function syncQuickToolbarControls(element, previewStyle) {
+  if (!element) return;
+
+  if (quickTextColorInput) {
+    quickTextColorInput.value = normalizeColor(element.style.color || previewStyle?.color || "#20231f");
+  }
+
+  if (quickBackgroundColorInput) {
+    quickBackgroundColorInput.value = normalizeColor(
+      element.style.backgroundColor || previewStyle?.backgroundColor || "#ffffff",
+    );
+  }
+
+  if (quickFontSizeInput) {
+    const fontSize = Number.parseFloat(element.style.fontSize || previewStyle?.fontSize || "");
+    quickFontSizeInput.value = Number.isFinite(fontSize) ? String(Math.round(fontSize)) : "";
+  }
+
+  if (quickTextPresetSelect) {
+    quickTextPresetSelect.value = "";
   }
 }
 
