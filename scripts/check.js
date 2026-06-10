@@ -19,10 +19,16 @@ const requiredSnippets = {
     ".source-rail-button",
     ".format-toolbar",
     ".preview-stage",
+    "overflow: hidden",
     ".slide-viewport",
     "@media (max-width: 920px)",
   ],
   "app.js": [
+    "function syncElementToSource",
+    "function findElementContentRange",
+    "new Blob([sourceEditor.value]",
+    "function observeLayoutChanges",
+    "function getCanvasBaseSize",
     "function toggleSourcePanel()",
     "function capturePreviewScroll()",
     "function restorePreviewScroll",
@@ -44,10 +50,27 @@ for (const [file, snippets] of Object.entries(requiredSnippets)) {
 }
 
 const html = fs.readFileSync("index.html", "utf8");
+if (html.includes("<span aria-hidden=\"true\">↑</span>")) {
+  throw new Error("Upload button should not contain the old arrow icon.");
+}
+
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
 const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
 if (duplicates.length) {
   throw new Error(`Duplicate id values: ${[...new Set(duplicates)].join(", ")}`);
+}
+
+const app = fs.readFileSync("app.js", "utf8");
+const forbiddenAppSnippets = [
+  "function syncSourceFromDoc",
+  "function formatHtmlForMvp",
+  "formatHtmlForMvp(",
+  "new Blob([`<!doctype html>\\n${doc.documentElement.outerHTML}`",
+];
+for (const snippet of forbiddenAppSnippets) {
+  if (app.includes(snippet)) {
+    throw new Error(`app.js contains forbidden source-rewriting snippet: ${snippet}`);
+  }
 }
 
 console.log("Static product checks passed.");

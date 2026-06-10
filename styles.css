@@ -390,7 +390,7 @@ button:disabled {
 .preview-stage {
   display: grid;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   place-items: center;
   padding: 28px;
   background:
@@ -402,16 +402,15 @@ button:disabled {
 
 .canvas-shell {
   width: min(100%, 1180px);
-  transform-origin: center center;
   transition:
-    transform 0.18s ease,
-    width 0.18s ease;
+    width 0.18s ease,
+    height 0.18s ease;
 }
 
 .slide-viewport {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  height: 100%;
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -420,8 +419,7 @@ button:disabled {
 }
 
 .slide-viewport.is-adaptive {
-  aspect-ratio: auto;
-  height: min(74vh, 900px);
+  height: 100%;
 }
 
 #previewFrame {
@@ -743,6 +741,7 @@ input[type="color"] {
   }
 
   .preview-stage {
+    overflow: hidden;
     padding: 16px;
   }
 }

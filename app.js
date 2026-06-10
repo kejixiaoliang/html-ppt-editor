@@ -172,12 +172,14 @@ const appState = {
   sourceCollapsed: true,
   canvasMode: "16:9",
   zoomMode: "fit",
+  resizeObserver: null,
 };
 
 function init() {
   sourceEditor.value = sampleHtml;
   pushHistory(sampleHtml, { replace: true });
   bindEvents();
+  observeLayoutChanges();
   applyWorkspaceState();
   applyCanvasState();
   renderPreview();
@@ -226,23 +228,29 @@ function bindEvents() {
     }
   });
 
-  bindInspectorControl(controls.text, (element, value) => updateElementOwnText(element, value));
-  bindInspectorControl(controls.id, (element, value) => setOptionalAttribute(element, "id", value));
-  bindInspectorControl(controls.className, (element, value) => setOptionalAttribute(element, "class", value));
-  bindInspectorControl(controls.src, (element, value) => setOptionalAttribute(element, "src", value));
-  bindInspectorControl(controls.href, (element, value) => setOptionalAttribute(element, "href", value));
+  bindInspectorControl(controls.text, (element, value) => updateElementOwnText(element, value), { patch: "text" });
+  bindInspectorControl(controls.id, (element, value) => setOptionalAttribute(element, "id", value), { patch: "opening" });
+  bindInspectorControl(controls.className, (element, value) => setOptionalAttribute(element, "class", value), {
+    patch: "opening",
+  });
+  bindInspectorControl(controls.src, (element, value) => setOptionalAttribute(element, "src", value), { patch: "opening" });
+  bindInspectorControl(controls.href, (element, value) => setOptionalAttribute(element, "href", value), { patch: "opening" });
   bindStyleToggle(controls.italic, "fontStyle", "italic");
   bindTextDecorationToggle(controls.underline, "underline");
   bindTextDecorationToggle(controls.strike, "line-through");
 
   for (const [controlName, styleName] of Object.entries(styleControlMap)) {
-    bindInspectorControl(controls[controlName], (element, value) => {
-      element.style[styleName] = value;
-    });
+    bindInspectorControl(
+      controls[controlName],
+      (element, value) => {
+        element.style[styleName] = value;
+      },
+      { patch: "opening" },
+    );
   }
 }
 
-function bindInspectorControl(control, applyChange) {
+function bindInspectorControl(control, applyChange, options = {}) {
   control.addEventListener("input", () => {
     if (appState.updatingInspector || !appState.selectedEditorId) {
       return;
@@ -253,14 +261,14 @@ function bindInspectorControl(control, applyChange) {
       return;
     }
 
+    const sourceRange = findSourceRangeForElement(element);
     applyChange(element, control.value.trim());
     const previewElement = getSelectedPreviewElement();
     if (previewElement) {
       applyChange(previewElement, control.value.trim());
     }
-    syncSourceFromDoc();
+    syncElementToSource(element, sourceRange, options.patch || "outer");
     pushHistory(sourceEditor.value);
-    updateFormatButtonState(button, element.style[styleName], activeValue);
     refreshSelectedMetadata();
   });
 }
@@ -271,14 +279,16 @@ function bindStyleToggle(button, styleName, activeValue) {
     const element = getSelectedSourceElement();
     if (!element) return;
 
+    const sourceRange = findSourceRangeForElement(element);
     const isActive = element.style[styleName] === activeValue || getComputedPreviewStyle(styleName) === activeValue;
     element.style[styleName] = isActive ? "" : activeValue;
     const previewElement = getSelectedPreviewElement();
     if (previewElement) {
       previewElement.style[styleName] = element.style[styleName];
     }
-    syncSourceFromDoc();
+    syncElementToSource(element, sourceRange, "opening");
     pushHistory(sourceEditor.value);
+    updateFormatButtonState(button, element.style[styleName], activeValue);
     refreshSelectedMetadata();
   });
 }
@@ -289,6 +299,7 @@ function bindTextDecorationToggle(button, token) {
     const element = getSelectedSourceElement();
     if (!element) return;
 
+    const sourceRange = findSourceRangeForElement(element);
     const tokens = getTextDecorationTokens(element);
     if (tokens.has(token)) {
       tokens.delete(token);
@@ -300,7 +311,7 @@ function bindTextDecorationToggle(button, token) {
     if (previewElement) {
       previewElement.style.textDecoration = element.style.textDecoration;
     }
-    syncSourceFromDoc();
+    syncElementToSource(element, sourceRange, "opening");
     pushHistory(sourceEditor.value);
     updateTextDecorationButtonStates(element);
     refreshSelectedMetadata();
@@ -330,6 +341,14 @@ function handleShortcuts(event) {
     event.preventDefault();
     toggleSourcePanel();
   }
+}
+
+function observeLayoutChanges() {
+  if (!window.ResizeObserver) return;
+  appState.resizeObserver = new ResizeObserver(() => {
+    window.requestAnimationFrame(updateCanvasScale);
+  });
+  appState.resizeObserver.observe(previewStage);
 }
 
 function renderPreview(options = {}) {
@@ -638,10 +657,10 @@ function findSourceRangeForElement(element) {
     }
     if (start === -1) return null;
     const end = source.indexOf(">", start);
-    return { start, end: end === -1 ? start + openTag.length : end + 1 };
+    return { start, end: end === -1 ? start + openTag.length : end + 1, kind: "opening" };
   }
 
-  return { start, end: start + outer.length };
+  return { start, end: start + outer.length, kind: "outer" };
 }
 
 function findOpeningTagByAttributes(source, element) {
@@ -769,11 +788,93 @@ function refreshSelectedMetadata() {
   sourceSelectionInfo.textContent = range ? `源码已定位：${label}` : `源码定位失败：${label}`;
 }
 
-function syncSourceFromDoc() {
-  if (!appState.sourceDoc) return;
-  const cleanDoc = getCleanSourceDoc();
-  sourceEditor.value = formatHtmlForMvp(`<!doctype html>\n${cleanDoc.documentElement.outerHTML}`);
+function syncElementToSource(element, previousRange, patchMode) {
+  if (!previousRange) {
+    setSourceStatus("源码定位失败，未写入源码");
+    return false;
+  }
+
+  const source = sourceEditor.value;
+  const cleanHtml = getCleanElementHtml(element);
+  let start = previousRange.start;
+  let end = previousRange.end;
+  let replacement = cleanHtml;
+
+  if (patchMode === "opening") {
+    const openingEnd = source.indexOf(">", previousRange.start);
+    if (openingEnd === -1 || openingEnd > previousRange.end) {
+      setSourceStatus("源码定位失败，未写入源码");
+      return false;
+    }
+    start = previousRange.start;
+    end = openingEnd + 1;
+    replacement = getOpeningTagFromHtml(cleanHtml);
+  } else if (patchMode === "text" && previousRange.kind !== "outer") {
+    const contentRange = findElementContentRange(source, previousRange.start, element.tagName.toLowerCase());
+    if (!contentRange) {
+      setSourceStatus("源码定位失败，未写入源码");
+      return false;
+    }
+    start = contentRange.start;
+    end = contentRange.end;
+    replacement = getCleanElementInnerHtml(element);
+  } else if (previousRange.kind !== "outer") {
+    setSourceStatus("源码定位失败，未写入源码");
+    return false;
+  }
+
+  sourceEditor.value = source.slice(0, start) + replacement + source.slice(end);
+  appState.selectedRange = {
+    start,
+    end: start + replacement.length,
+    kind: patchMode === "opening" ? "opening" : "outer",
+  };
   setSourceStatus("已同步");
+  return true;
+}
+
+function getCleanElementHtml(element) {
+  const clone = element.cloneNode(true);
+  cleanRuntimeFromElement(clone);
+  return clone.outerHTML;
+}
+
+function getCleanElementInnerHtml(element) {
+  const clone = element.cloneNode(true);
+  cleanRuntimeFromElement(clone);
+  return clone.innerHTML;
+}
+
+function cleanRuntimeFromElement(element) {
+  [element, ...element.querySelectorAll("*")].forEach((node) => {
+    node.removeAttribute("data-editor-id");
+    node.removeAttribute("data-editor-runtime");
+    node.classList.remove("__html_editor_hover__", "__html_editor_selected__");
+    if (!node.getAttribute("class")) node.removeAttribute("class");
+  });
+}
+
+function getOpeningTagFromHtml(html) {
+  const end = html.indexOf(">");
+  return end === -1 ? html : html.slice(0, end + 1);
+}
+
+function findElementContentRange(source, openingStart, tagName) {
+  const openingEnd = source.indexOf(">", openingStart);
+  if (openingEnd === -1) return null;
+
+  const closePattern = new RegExp(`</${escapeRegExp(tagName)}\\s*>`, "i");
+  const closeMatch = closePattern.exec(source.slice(openingEnd + 1));
+  if (!closeMatch) return null;
+
+  return {
+    start: openingEnd + 1,
+    end: openingEnd + 1 + closeMatch.index,
+  };
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function toggleSourcePanel() {
@@ -899,31 +1000,32 @@ function applyCanvasState() {
   });
 
   slideViewport.classList.toggle("is-adaptive", appState.canvasMode === "adaptive");
-  if (appState.canvasMode === "4:3") {
-    slideViewport.style.aspectRatio = "4 / 3";
-  } else if (appState.canvasMode === "16:9") {
-    slideViewport.style.aspectRatio = "16 / 9";
-  } else {
-    slideViewport.style.aspectRatio = "";
-  }
-
   updateCanvasScale();
 }
 
 function updateCanvasScale() {
   if (!previewStage || !canvasShell) return;
 
-  const fixedWidth = appState.canvasMode === "4:3" ? 960 : 1120;
   const stageWidth = Math.max(280, previewStage.clientWidth - 56);
   const stageHeight = Math.max(260, previewStage.clientHeight - 56);
-  const baseHeight = appState.canvasMode === "4:3" ? fixedWidth * 0.75 : fixedWidth * 0.5625;
-  const fitScale = appState.canvasMode === "adaptive" ? 1 : Math.min(1, stageWidth / fixedWidth, stageHeight / baseHeight);
-  const scale = appState.zoomMode === "fit" ? fitScale : Number(appState.zoomMode);
 
-  canvasShell.style.width = appState.canvasMode === "adaptive" ? "min(100%, 1180px)" : `${fixedWidth}px`;
-  canvasShell.style.transform = `scale(${scale})`;
-  canvasShell.style.margin = appState.canvasMode === "adaptive" || scale <= 1 ? "0" : `${(baseHeight * (scale - 1)) / 2}px 0`;
-  canvasInfo.textContent = `${canvasLabel(appState.canvasMode)} · ${zoomLabel(appState.zoomMode, scale)}`;
+  if (appState.canvasMode === "adaptive") {
+    canvasShell.style.width = `${stageWidth}px`;
+    canvasShell.style.height = `${stageHeight}px`;
+    canvasInfo.textContent = `${canvasLabel(appState.canvasMode)} · ${zoomLabel(appState.zoomMode, 1, 1)}`;
+    return;
+  }
+
+  const base = getCanvasBaseSize(appState.canvasMode);
+  const fitScale = Math.min(1, stageWidth / base.width, stageHeight / base.height);
+  const requestedScale = appState.zoomMode === "fit" ? fitScale : Number(appState.zoomMode);
+  const scale = appState.zoomMode === "fit" ? fitScale : requestedScale;
+  const width = Math.max(240, base.width * scale);
+  const height = Math.max(180, base.height * scale);
+
+  canvasShell.style.width = `${width}px`;
+  canvasShell.style.height = `${height}px`;
+  canvasInfo.textContent = `${canvasLabel(appState.canvasMode)} · ${zoomLabel(appState.zoomMode, scale, fitScale)}`;
 }
 
 function canvasLabel(mode) {
@@ -931,9 +1033,18 @@ function canvasLabel(mode) {
   return mode;
 }
 
-function zoomLabel(mode, scale) {
+function zoomLabel(mode, scale, fitScale) {
   if (mode === "fit") return `Fit ${Math.round(scale * 100)}%`;
-  return `${Math.round(Number(mode) * 100)}%`;
+  const requested = Number(mode);
+  if (requested > fitScale) return `${Math.round(requested * 100)}%`;
+  return `${Math.round(scale * 100)}%`;
+}
+
+function getCanvasBaseSize(mode) {
+  if (mode === "4:3") {
+    return { width: 960, height: 720 };
+  }
+  return { width: 1120, height: 630 };
 }
 
 function cleanEditorRuntime(doc) {
@@ -1103,10 +1214,7 @@ function updateHistoryButtons() {
 }
 
 function downloadHtml() {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(sourceEditor.value, "text/html");
-  cleanEditorRuntime(doc);
-  const blob = new Blob([`<!doctype html>\n${doc.documentElement.outerHTML}`], {
+  const blob = new Blob([sourceEditor.value], {
     type: "text/html;charset=utf-8",
   });
   const url = URL.createObjectURL(blob);
@@ -1115,13 +1223,6 @@ function downloadHtml() {
   anchor.download = "edited-html-ppt.html";
   anchor.click();
   URL.revokeObjectURL(url);
-}
-
-function formatHtmlForMvp(html) {
-  return html
-    .replace(/></g, ">\n<")
-    .replace(/\n\s*\n/g, "\n")
-    .trim();
 }
 
 function setSourceStatus(text) {
