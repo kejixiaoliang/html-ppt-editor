@@ -22,10 +22,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  const requestPath = decodeURIComponent(url.pathname);
   const safePath = path
-    .normalize(decodeURIComponent(url.pathname))
+    .normalize(requestPath === "/" ? "index.html" : requestPath)
+    .replace(/^([/\\])+/, "")
     .replace(/^(\.\.[/\\])+/, "");
-  const filePath = path.join(root, safePath === "/" ? "index.html" : safePath);
+  const filePath = path.join(root, safePath);
 
   if (!filePath.startsWith(root)) {
     response.writeHead(403);
@@ -48,5 +50,5 @@ const server = http.createServer((request, response) => {
 });
 
 server.listen(port, () => {
-  console.log(`HTML Visual Editor MVP running at http://localhost:${port}`);
+  console.log(`HTML Studio running at http://localhost:${port}`);
 });

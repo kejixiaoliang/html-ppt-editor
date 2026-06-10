@@ -18,6 +18,14 @@ const inspectorForm = document.querySelector("#inspectorForm");
 const inspectorHint = document.querySelector("#inspectorHint");
 const ancestorList = document.querySelector("#ancestorList");
 const childrenList = document.querySelector("#childrenList");
+const workspace = document.querySelector("#workspace");
+const sourceToggleBtn = document.querySelector("#sourceToggleBtn");
+const previewStage = document.querySelector("#previewStage");
+const canvasShell = document.querySelector("#canvasShell");
+const slideViewport = document.querySelector("#slideViewport");
+const canvasInfo = document.querySelector("#canvasInfo");
+const canvasModeButtons = document.querySelectorAll("[data-canvas-mode]");
+const zoomModeButtons = document.querySelectorAll("[data-zoom-mode]");
 
 const controls = {
   selectedSummary: document.querySelector("#selectedSummary"),
@@ -70,7 +78,7 @@ const sampleHtml = `<!doctype html>
     <style>
       body {
         margin: 0;
-        font-family: Inter, "Microsoft YaHei", sans-serif;
+        font-family: "Microsoft YaHei", sans-serif;
         background: #f4f6f8;
         color: #111827;
       }
@@ -148,12 +156,17 @@ const appState = {
   renderTimer: null,
   history: [],
   historyIndex: -1,
+  sourceCollapsed: true,
+  canvasMode: "16:9",
+  zoomMode: "fit",
 };
 
 function init() {
   sourceEditor.value = sampleHtml;
   pushHistory(sampleHtml, { replace: true });
   bindEvents();
+  applyWorkspaceState();
+  applyCanvasState();
   renderPreview();
 }
 
@@ -175,9 +188,19 @@ function bindEvents() {
   undoBtn.addEventListener("click", undo);
   redoBtn.addEventListener("click", redo);
   locateSourceBtn.addEventListener("click", () => locateCurrentSourceRange(true));
+  sourceToggleBtn.addEventListener("click", toggleSourcePanel);
   selectParentBtn.addEventListener("click", selectParentElement);
   clearSelectionBtn.addEventListener("click", clearSelection);
   document.addEventListener("keydown", handleShortcuts);
+  window.addEventListener("resize", () => updateCanvasScale());
+
+  canvasModeButtons.forEach((button) => {
+    button.addEventListener("click", () => setCanvasMode(button.dataset.canvasMode));
+  });
+
+  zoomModeButtons.forEach((button) => {
+    button.addEventListener("click", () => setZoomMode(button.dataset.zoomMode));
+  });
 
   window.addEventListener("message", (event) => {
     if (event.source !== previewFrame.contentWindow) {
@@ -238,6 +261,11 @@ function handleShortcuts(event) {
     event.preventDefault();
     clearSelection();
   }
+
+  if (cmd && key === "b") {
+    event.preventDefault();
+    toggleSourcePanel();
+  }
 }
 
 function renderPreview(options = {}) {
@@ -254,6 +282,7 @@ function renderPreview(options = {}) {
         previewFrame.contentWindow?.__selectEditorElement?.(appState.selectedEditorId);
         updateInspector();
       }
+      updateCanvasScale();
     },
     { once: true },
   );
@@ -306,6 +335,7 @@ function injectPreviewBridge(doc) {
     .__html_editor_selected__ {
       outline: 3px solid #2563eb !important;
       outline-offset: 3px !important;
+      box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.16) !important;
     }
 
     .__html_editor_badge__ {
@@ -317,7 +347,7 @@ function injectPreviewBridge(doc) {
       color: #fff;
       background: #2563eb;
       box-shadow: 0 8px 24px rgba(15, 23, 42, 0.22);
-      font: 700 12px/1.2 Inter, ui-sans-serif, system-ui, sans-serif;
+      font: 700 12px/1.2 "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
       pointer-events: none;
       white-space: nowrap;
       overflow: hidden;
@@ -652,6 +682,76 @@ function syncSourceFromDoc() {
   const cleanDoc = getCleanSourceDoc();
   sourceEditor.value = formatHtmlForMvp(`<!doctype html>\n${cleanDoc.documentElement.outerHTML}`);
   setSourceStatus("已同步");
+}
+
+function toggleSourcePanel() {
+  appState.sourceCollapsed = !appState.sourceCollapsed;
+  applyWorkspaceState();
+  window.setTimeout(updateCanvasScale, 220);
+}
+
+function applyWorkspaceState() {
+  workspace.classList.toggle("source-collapsed", appState.sourceCollapsed);
+  sourceToggleBtn.title = appState.sourceCollapsed ? "展开源码" : "收起源码";
+  sourceToggleBtn.setAttribute("aria-label", sourceToggleBtn.title);
+}
+
+function setCanvasMode(mode) {
+  if (!mode || appState.canvasMode === mode) return;
+  appState.canvasMode = mode;
+  applyCanvasState();
+}
+
+function setZoomMode(mode) {
+  if (!mode || appState.zoomMode === mode) return;
+  appState.zoomMode = mode;
+  applyCanvasState();
+}
+
+function applyCanvasState() {
+  canvasModeButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.canvasMode === appState.canvasMode);
+  });
+  zoomModeButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.zoomMode === appState.zoomMode);
+  });
+
+  slideViewport.classList.toggle("is-adaptive", appState.canvasMode === "adaptive");
+  if (appState.canvasMode === "4:3") {
+    slideViewport.style.aspectRatio = "4 / 3";
+  } else if (appState.canvasMode === "16:9") {
+    slideViewport.style.aspectRatio = "16 / 9";
+  } else {
+    slideViewport.style.aspectRatio = "";
+  }
+
+  updateCanvasScale();
+}
+
+function updateCanvasScale() {
+  if (!previewStage || !canvasShell) return;
+
+  const fixedWidth = appState.canvasMode === "4:3" ? 960 : 1120;
+  const stageWidth = Math.max(280, previewStage.clientWidth - 56);
+  const stageHeight = Math.max(260, previewStage.clientHeight - 56);
+  const baseHeight = appState.canvasMode === "4:3" ? fixedWidth * 0.75 : fixedWidth * 0.5625;
+  const fitScale = appState.canvasMode === "adaptive" ? 1 : Math.min(1, stageWidth / fixedWidth, stageHeight / baseHeight);
+  const scale = appState.zoomMode === "fit" ? fitScale : Number(appState.zoomMode);
+
+  canvasShell.style.width = appState.canvasMode === "adaptive" ? "min(100%, 1180px)" : `${fixedWidth}px`;
+  canvasShell.style.transform = `scale(${scale})`;
+  canvasShell.style.margin = appState.canvasMode === "adaptive" || scale <= 1 ? "0" : `${(baseHeight * (scale - 1)) / 2}px 0`;
+  canvasInfo.textContent = `${canvasLabel(appState.canvasMode)} · ${zoomLabel(appState.zoomMode, scale)}`;
+}
+
+function canvasLabel(mode) {
+  if (mode === "adaptive") return "自适应";
+  return mode;
+}
+
+function zoomLabel(mode, scale) {
+  if (mode === "fit") return `Fit ${Math.round(scale * 100)}%`;
+  return `${Math.round(Number(mode) * 100)}%`;
 }
 
 function cleanEditorRuntime(doc) {

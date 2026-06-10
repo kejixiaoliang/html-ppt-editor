@@ -1,10 +1,11 @@
 {
-  "name": "html-visual-editor-mvp",
-  "version": "0.1.0",
+  "name": "html-studio-visual-editor",
+  "version": "1.0.0",
   "private": true,
-  "description": "MVP for visually editing imported HTML and syncing changes back to source.",
+  "description": "A local visual editor for importing, adjusting, previewing, and exporting single-file HTML pages.",
   "scripts": {
     "start": "node server/index.js",
-    "check": "node --check app.js && node --check server/index.js"
+    "check": "node --check app.js && node --check server/index.js && node scripts/check.js",
+    "test": "npm run check"
   }
 }
