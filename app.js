@@ -1,3 +1,14 @@
+import * as canvasLayout from "./src/canvasLayout.js";
+import {
+  setOptionalAttribute,
+  styleControlMap,
+  updateElementOwnText,
+  updateFormatButtonState,
+} from "./src/inspectorControls.js";
+import * as previewBridge from "./src/previewBridge.js";
+import * as sourceMapping from "./src/sourceMapping.js";
+import * as stateHistory from "./src/stateHistory.js";
+
 const sourceEditor = document.querySelector("#sourceEditor");
 const previewFrame = document.querySelector("#previewFrame");
 const fileInput = document.querySelector("#fileInput");
@@ -69,25 +80,6 @@ const controls = {
   opacity: document.querySelector("#opacityInput"),
   boxShadow: document.querySelector("#boxShadowInput"),
   transform: document.querySelector("#transformInput"),
-};
-
-const styleControlMap = {
-  color: "color",
-  background: "backgroundColor",
-  fontSize: "fontSize",
-  fontWeight: "fontWeight",
-  fontFamily: "fontFamily",
-  lineHeight: "lineHeight",
-  letterSpacing: "letterSpacing",
-  textAlign: "textAlign",
-  width: "width",
-  height: "height",
-  margin: "margin",
-  padding: "padding",
-  borderRadius: "borderRadius",
-  opacity: "opacity",
-  boxShadow: "boxShadow",
-  transform: "transform",
 };
 
 const sampleHtml = `<!doctype html>
@@ -183,6 +175,7 @@ const appState = {
   canvasMode: "16:9",
   zoomMode: "fit",
   resizeObserver: null,
+  sourceMap: null,
   sourceLabel: "示例",
   copiedInlineStyle: "",
 };
@@ -570,9 +563,10 @@ function renderPreview(options = {}) {
   const scrollToRestore = options.preserveScroll ? capturePreviewScroll() : null;
   const parser = new DOMParser();
   appState.sourceDoc = parser.parseFromString(sourceEditor.value, "text/html");
-  ensureHtmlDocument(appState.sourceDoc);
-  injectEditorIds(appState.sourceDoc);
-  injectPreviewBridge(appState.sourceDoc);
+  previewBridge.ensureHtmlDocument(appState.sourceDoc);
+  previewBridge.injectEditorIds(appState.sourceDoc);
+  appState.sourceMap = sourceMapping.buildSourceMap(sourceEditor.value, appState.sourceDoc);
+  previewBridge.injectPreviewBridge(appState.sourceDoc);
 
   previewFrame.addEventListener(
     "load",
@@ -599,153 +593,6 @@ function renderPreview(options = {}) {
   }
 
   setSourceStatus("已同步");
-}
-
-function ensureHtmlDocument(doc) {
-  if (!doc.head) {
-    doc.documentElement.prepend(doc.createElement("head"));
-  }
-  if (!doc.body) {
-    doc.documentElement.append(doc.createElement("body"));
-  }
-}
-
-function injectEditorIds(doc) {
-  doc.body.querySelectorAll("*").forEach((element, index) => {
-    if (!element.dataset.editorId) {
-      element.dataset.editorId = `el_${String(index + 1).padStart(4, "0")}`;
-    }
-  });
-}
-
-function injectPreviewBridge(doc) {
-  doc.querySelectorAll("[data-editor-runtime]").forEach((node) => node.remove());
-
-  const style = doc.createElement("style");
-  style.dataset.editorRuntime = "true";
-  style.textContent = `
-    html.__html_editor_pick_mode__ * {
-      cursor: crosshair !important;
-    }
-
-    [data-editor-id] {
-      min-height: 1px;
-    }
-
-    .__html_editor_hover__ {
-      outline: 2px solid #c5944a !important;
-      outline-offset: 2px !important;
-    }
-
-    .__html_editor_selected__ {
-      outline: 3px solid #b66a58 !important;
-      outline-offset: 3px !important;
-      box-shadow: 0 0 0 6px rgba(182, 106, 88, 0.18) !important;
-    }
-
-    .__html_editor_badge__ {
-      position: fixed;
-      z-index: 2147483647;
-      max-width: 300px;
-      padding: 5px 8px;
-      border-radius: 6px;
-      color: #fff;
-      background: #b66a58;
-      box-shadow: 0 8px 24px rgba(43, 38, 30, 0.22);
-      font: 700 12px/1.2 "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
-      pointer-events: none;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .__html_editor_badge__.__hover__ {
-      background: #c5944a;
-    }
-  `;
-
-  const script = doc.createElement("script");
-  script.dataset.editorRuntime = "true";
-  script.textContent = `
-    (() => {
-      document.documentElement.classList.add("__html_editor_pick_mode__");
-      let hovered = null;
-      let selected = null;
-      const badge = document.createElement("div");
-      badge.className = "__html_editor_badge__";
-      badge.hidden = true;
-      document.documentElement.appendChild(badge);
-
-      function getEditable(target) {
-        return target?.closest?.("[data-editor-id]");
-      }
-
-      function labelFor(element) {
-        const tag = element.tagName.toLowerCase();
-        const id = element.id ? "#" + element.id : "";
-        const className = [...element.classList]
-          .filter((name) => !name.startsWith("__html_editor_"))
-          .slice(0, 2)
-          .map((name) => "." + name)
-          .join("");
-        return tag + id + className;
-      }
-
-      function showBadge(element, hover) {
-        const rect = element.getBoundingClientRect();
-        badge.textContent = labelFor(element);
-        badge.classList.toggle("__hover__", hover);
-        badge.style.left = Math.max(8, rect.left) + "px";
-        badge.style.top = Math.max(8, rect.top - 30) + "px";
-        badge.hidden = false;
-      }
-
-      document.addEventListener("mouseover", (event) => {
-        const element = getEditable(event.target);
-        if (!element || element === hovered) return;
-        if (hovered && hovered !== selected) hovered.classList.remove("__html_editor_hover__");
-        hovered = element;
-        if (hovered !== selected) hovered.classList.add("__html_editor_hover__");
-        if (hovered !== selected) showBadge(hovered, true);
-      }, true);
-
-      document.addEventListener("mouseout", (event) => {
-        const element = getEditable(event.target);
-        if (!element || element !== hovered) return;
-        if (hovered !== selected) hovered.classList.remove("__html_editor_hover__");
-        hovered = null;
-        if (!selected) badge.hidden = true;
-      }, true);
-
-      document.addEventListener("click", (event) => {
-        const element = getEditable(event.target);
-        if (!element) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (selected) selected.classList.remove("__html_editor_selected__");
-        selected = element;
-        selected.classList.remove("__html_editor_hover__");
-        selected.classList.add("__html_editor_selected__");
-        showBadge(selected, false);
-        window.parent.postMessage({
-          type: "editor:select",
-          editorId: selected.dataset.editorId
-        }, "*");
-      }, true);
-
-      window.__selectEditorElement = (editorId) => {
-        const element = document.querySelector('[data-editor-id="' + editorId + '"]');
-        if (!element) return;
-        if (selected) selected.classList.remove("__html_editor_selected__");
-        selected = element;
-        selected.classList.add("__html_editor_selected__");
-        showBadge(selected, false);
-      };
-    })();
-  `;
-
-  doc.head.append(style);
-  doc.body.append(script);
 }
 
 function selectElement(editorId) {
@@ -867,88 +714,15 @@ function createElementChip(element) {
 }
 
 function findSourceRangeForElement(element) {
-  const source = sourceEditor.value;
-  const cleanDoc = getCleanSourceDoc();
-  const path = getElementIndexPath(element);
-  const cleanElement = getElementByIndexPath(cleanDoc, path);
-
-  if (!cleanElement) {
-    return null;
-  }
-
-  const outer = cleanElement.outerHTML;
-  let start = source.indexOf(outer);
-
-  if (start === -1) {
-    const openTag = getOpeningTag(cleanElement);
-    start = source.indexOf(openTag);
-    if (start === -1) {
-      start = findOpeningTagByAttributes(source, cleanElement);
-    }
-    if (start === -1) return null;
-    const end = source.indexOf(">", start);
-    return { start, end: end === -1 ? start + openTag.length : end + 1, kind: "opening" };
-  }
-
-  return { start, end: start + outer.length, kind: "outer" };
-}
-
-function findOpeningTagByAttributes(source, element) {
-  const tagName = element.tagName.toLowerCase();
-  const id = element.getAttribute("id");
-  const className = element.getAttribute("class");
-  const tagPattern = new RegExp(`<${tagName}(\\s|>|/)`, "gi");
-  let match;
-
-  while ((match = tagPattern.exec(source))) {
-    const start = match.index;
-    const end = source.indexOf(">", start);
-    if (end === -1) continue;
-    const openTag = source.slice(start, end + 1);
-    if (id && !openTag.includes(`id="${id}"`) && !openTag.includes(`id='${id}'`)) continue;
-    if (className && !openTag.includes(className)) continue;
-    return start;
-  }
-
-  return -1;
-}
-
-function getCleanSourceDoc() {
-  const cleanDoc = appState.sourceDoc.cloneNode(true);
-  cleanEditorRuntime(cleanDoc);
-  return cleanDoc;
+  return sourceMapping.findElementSourceRange(sourceEditor.value, appState.sourceDoc, element, appState.sourceMap);
 }
 
 function getElementIndexPath(element) {
-  const path = [];
-  let current = element;
-
-  while (current && current.parentElement && current.tagName.toLowerCase() !== "body") {
-    const siblings = Array.from(current.parentElement.children).filter(
-      (sibling) => !sibling.matches("[data-editor-runtime]"),
-    );
-    path.unshift(siblings.indexOf(current));
-    current = current.parentElement;
-  }
-
-  return path;
+  return sourceMapping.getElementIndexPath(element);
 }
 
 function getElementByIndexPath(doc, path) {
-  let current = doc.body;
-  for (const index of path) {
-    if (!current || !current.children[index]) {
-      return null;
-    }
-    current = current.children[index];
-  }
-  return current;
-}
-
-function getOpeningTag(element) {
-  const html = element.outerHTML;
-  const end = html.indexOf(">");
-  return end === -1 ? html : html.slice(0, end + 1);
+  return sourceMapping.getElementByIndexPath(doc, path);
 }
 
 function locateCurrentSourceRange(focusSource) {
@@ -1051,92 +825,23 @@ function clamp(value, min, max) {
 }
 
 function syncElementToSource(element, previousRange, patchMode) {
-  if (!previousRange) {
+  const result = sourceMapping.syncElementToSource({
+    source: sourceEditor.value,
+    element,
+    previousRange,
+    patchMode,
+  });
+
+  if (!result.ok) {
     setSourceStatus("源码定位失败，未写入源码");
     return false;
   }
 
-  const source = sourceEditor.value;
-  const cleanHtml = getCleanElementHtml(element);
-  let start = previousRange.start;
-  let end = previousRange.end;
-  let replacement = cleanHtml;
-
-  if (patchMode === "opening") {
-    const openingEnd = source.indexOf(">", previousRange.start);
-    if (openingEnd === -1 || openingEnd > previousRange.end) {
-      setSourceStatus("源码定位失败，未写入源码");
-      return false;
-    }
-    start = previousRange.start;
-    end = openingEnd + 1;
-    replacement = getOpeningTagFromHtml(cleanHtml);
-  } else if (patchMode === "text" && previousRange.kind !== "outer") {
-    const contentRange = findElementContentRange(source, previousRange.start, element.tagName.toLowerCase());
-    if (!contentRange) {
-      setSourceStatus("源码定位失败，未写入源码");
-      return false;
-    }
-    start = contentRange.start;
-    end = contentRange.end;
-    replacement = getCleanElementInnerHtml(element);
-  } else if (previousRange.kind !== "outer") {
-    setSourceStatus("源码定位失败，未写入源码");
-    return false;
-  }
-
-  sourceEditor.value = source.slice(0, start) + replacement + source.slice(end);
-  appState.selectedRange = {
-    start,
-    end: start + replacement.length,
-    kind: patchMode === "opening" ? "opening" : "outer",
-  };
+  sourceEditor.value = result.source;
+  appState.selectedRange = result.range;
+  appState.sourceMap = sourceMapping.buildSourceMap(sourceEditor.value, appState.sourceDoc);
   setSourceStatus("已同步");
   return true;
-}
-
-function getCleanElementHtml(element) {
-  const clone = element.cloneNode(true);
-  cleanRuntimeFromElement(clone);
-  return clone.outerHTML;
-}
-
-function getCleanElementInnerHtml(element) {
-  const clone = element.cloneNode(true);
-  cleanRuntimeFromElement(clone);
-  return clone.innerHTML;
-}
-
-function cleanRuntimeFromElement(element) {
-  [element, ...element.querySelectorAll("*")].forEach((node) => {
-    node.removeAttribute("data-editor-id");
-    node.removeAttribute("data-editor-runtime");
-    node.classList.remove("__html_editor_hover__", "__html_editor_selected__");
-    if (!node.getAttribute("class")) node.removeAttribute("class");
-  });
-}
-
-function getOpeningTagFromHtml(html) {
-  const end = html.indexOf(">");
-  return end === -1 ? html : html.slice(0, end + 1);
-}
-
-function findElementContentRange(source, openingStart, tagName) {
-  const openingEnd = source.indexOf(">", openingStart);
-  if (openingEnd === -1) return null;
-
-  const closePattern = new RegExp(`</${escapeRegExp(tagName)}\\s*>`, "i");
-  const closeMatch = closePattern.exec(source.slice(openingEnd + 1));
-  if (!closeMatch) return null;
-
-  return {
-    start: openingEnd + 1,
-    end: openingEnd + 1 + closeMatch.index,
-  };
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function toggleSourcePanel() {
@@ -1223,12 +928,6 @@ function structuredCloneSafe(value) {
   return JSON.parse(JSON.stringify(value || {}));
 }
 
-function updateFormatButtonState(button, value, activeValue) {
-  const isActive = value === activeValue;
-  button.classList.toggle("is-active", isActive);
-  button.setAttribute("aria-pressed", String(isActive));
-}
-
 function updateTextDecorationButtonStates(element) {
   const tokens = getTextDecorationTokens(element);
   updateFormatButtonState(controls.underline, tokens.has("underline") ? "underline" : "", "underline");
@@ -1256,89 +955,21 @@ function setZoomMode(mode) {
 }
 
 function applyCanvasState() {
-  canvasModeButtons.forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.canvasMode === appState.canvasMode);
+  canvasLayout.applyCanvasState({
+    state: appState,
+    buttons: { canvasModeButtons, zoomModeButtons },
+    slideViewport,
+    updateCanvasScale,
   });
-  zoomModeButtons.forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.zoomMode === appState.zoomMode);
-  });
-
-  slideViewport.classList.toggle("is-adaptive", appState.canvasMode === "adaptive");
-  updateCanvasScale();
 }
 
 function updateCanvasScale() {
-  if (!previewStage || !canvasShell) return;
-
-  const stageWidth = Math.max(280, previewStage.clientWidth - 56);
-  const stageHeight = Math.max(260, previewStage.clientHeight - 56);
-
-  if (appState.canvasMode === "adaptive") {
-    canvasShell.style.width = `${stageWidth}px`;
-    canvasShell.style.height = `${stageHeight}px`;
-    canvasInfo.textContent = `${canvasLabel(appState.canvasMode)} · ${zoomLabel(appState.zoomMode, 1, 1)}`;
-    return;
-  }
-
-  const base = getCanvasBaseSize(appState.canvasMode);
-  const fitScale = Math.min(1, stageWidth / base.width, stageHeight / base.height);
-  const requestedScale = appState.zoomMode === "fit" ? fitScale : Number(appState.zoomMode);
-  const scale = appState.zoomMode === "fit" ? fitScale : requestedScale;
-  const width = Math.max(240, base.width * scale);
-  const height = Math.max(180, base.height * scale);
-
-  canvasShell.style.width = `${width}px`;
-  canvasShell.style.height = `${height}px`;
-  canvasInfo.textContent = `${canvasLabel(appState.canvasMode)} · ${zoomLabel(appState.zoomMode, scale, fitScale)}`;
-}
-
-function canvasLabel(mode) {
-  if (mode === "adaptive") return "自适应";
-  return mode;
-}
-
-function zoomLabel(mode, scale, fitScale) {
-  if (mode === "fit") return `Fit ${Math.round(scale * 100)}%`;
-  const requested = Number(mode);
-  if (requested > fitScale) return `${Math.round(requested * 100)}%`;
-  return `${Math.round(scale * 100)}%`;
-}
-
-function getCanvasBaseSize(mode) {
-  if (mode === "4:3") {
-    return { width: 960, height: 720 };
-  }
-  return { width: 1120, height: 630 };
-}
-
-function cleanEditorRuntime(doc) {
-  doc.querySelectorAll("[data-editor-runtime]").forEach((node) => node.remove());
-  doc.querySelectorAll("[data-editor-id]").forEach((element) => {
-    element.removeAttribute("data-editor-id");
-    element.classList.remove("__html_editor_hover__", "__html_editor_selected__");
-    if (!element.getAttribute("class")) element.removeAttribute("class");
+  canvasLayout.updateCanvasScale({
+    state: appState,
+    previewStage,
+    canvasShell,
+    canvasInfo,
   });
-  doc.querySelectorAll(".__html_editor_badge__").forEach((node) => node.remove());
-  doc.documentElement.classList.remove("__html_editor_pick_mode__");
-  if (!doc.documentElement.getAttribute("class")) doc.documentElement.removeAttribute("class");
-}
-
-function setOptionalAttribute(element, attributeName, value) {
-  if (value) element.setAttribute(attributeName, value);
-  else element.removeAttribute(attributeName);
-}
-
-function updateElementOwnText(element, value) {
-  const textNode = Array.from(element.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
-  if (textNode) {
-    textNode.textContent = value;
-    return;
-  }
-  if (element.firstChild) {
-    element.insertBefore(element.ownerDocument.createTextNode(value), element.firstChild);
-    return;
-  }
-  element.textContent = value;
 }
 
 function getElementLabel(element) {
@@ -1461,21 +1092,7 @@ function restoreHistory() {
 }
 
 function pushHistory(source, options = {}) {
-  if (options.replace) {
-    appState.history = [source];
-    appState.historyIndex = 0;
-    updateHistoryButtons();
-    return;
-  }
-  if (appState.history[appState.historyIndex] === source) {
-    updateHistoryButtons();
-    return;
-  }
-  appState.history = appState.history.slice(0, appState.historyIndex + 1);
-  appState.history.push(source);
-  if (appState.history.length > 80) appState.history.shift();
-  appState.historyIndex = appState.history.length - 1;
-  updateHistoryButtons();
+  stateHistory.pushHistory(appState, source, updateHistoryButtons, options);
 }
 
 function updateHistoryButtons() {
@@ -1501,7 +1118,7 @@ function saveDraft() {
   };
 
   try {
-    localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+    stateHistory.writeDraft(localStorage, draftStorageKey, draft);
     sourceStatus.textContent = "已自动保存";
   } catch (error) {
     sourceStatus.textContent = "草稿过大，请导出";
@@ -1542,23 +1159,11 @@ function discardDraft() {
 }
 
 function readDraft() {
-  try {
-    return JSON.parse(localStorage.getItem(draftStorageKey) || "null");
-  } catch (error) {
-    return null;
-  }
+  return stateHistory.readDraft(localStorage, draftStorageKey);
 }
 
 function formatDraftTime(value) {
-  if (!value) return "刚刚保存";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "刚刚保存";
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return stateHistory.formatDraftTime(value);
 }
 
 function downloadHtml() {
