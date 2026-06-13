@@ -40,6 +40,41 @@ export function findElementSourceRange(source, doc, element, sourceMap) {
   return locateElementRange(source, cleanElement, []);
 }
 
+export function findElementOuterSourceRange(source, doc, element, sourceMap) {
+  const openingRange = findElementSourceRange(source, doc, element, sourceMap);
+  if (!openingRange) return null;
+
+  const tagName = element.tagName.toLowerCase();
+  const openingEnd = source.indexOf(">", openingRange.start);
+  if (openingEnd === -1) return null;
+  if (isVoidElement(tagName) || source[openingEnd - 1] === "/") {
+    return { start: openingRange.start, end: openingEnd + 1, kind: "outer" };
+  }
+
+  const tagPattern = new RegExp(`<\\/?${escapeRegExp(tagName)}(\\s|>|/)`, "gi");
+  tagPattern.lastIndex = openingEnd + 1;
+  let depth = 1;
+  let match;
+
+  while ((match = tagPattern.exec(source))) {
+    const start = match.index;
+    const end = source.indexOf(">", start);
+    if (end === -1) return null;
+    const token = source.slice(start, end + 1);
+    if (token.startsWith(`</`)) {
+      depth -= 1;
+      if (depth === 0) {
+        return { start: openingRange.start, end: end + 1, kind: "outer" };
+      }
+    } else if (!token.endsWith("/>")) {
+      depth += 1;
+    }
+    tagPattern.lastIndex = end + 1;
+  }
+
+  return null;
+}
+
 export function syncElementToSource({ source, element, previousRange, patchMode }) {
   if (!previousRange) return { ok: false, source, range: null };
 
@@ -250,6 +285,10 @@ function rangeStillMatches(source, range) {
     return source.slice(range.start, range.end).startsWith(`<${range.tagName}`);
   }
   return source.slice(range.start, range.start + range.openingTag.length) === range.openingTag;
+}
+
+function isVoidElement(tagName) {
+  return new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]).has(tagName);
 }
 
 function buildOpeningTag(element) {
