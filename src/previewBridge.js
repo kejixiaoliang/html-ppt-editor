@@ -79,6 +79,8 @@ export function injectPreviewBridge(doc) {
       document.documentElement.classList.add("__html_editor_pick_mode__");
       let hovered = null;
       let selected = null;
+      let focusDrag = null;
+      let suppressClick = false;
       const badge = document.createElement("div");
       badge.className = "__html_editor_badge__";
       badge.hidden = true;
@@ -142,6 +144,35 @@ export function injectPreviewBridge(doc) {
         showBadge(selected, false);
       }
 
+      function isImageFocusCandidate(element) {
+        if (!element) return false;
+        if (element.tagName?.toLowerCase() === "img") return true;
+        if (element.getAttribute("data-image")) return true;
+        const style = window.getComputedStyle(element);
+        return Boolean(style.backgroundImage && style.backgroundImage !== "none");
+      }
+
+      function focusPointFromEvent(element, event) {
+        const rect = element.getBoundingClientRect();
+        const x = rect.width ? ((event.clientX - rect.left) / rect.width) * 100 : 50;
+        const y = rect.height ? ((event.clientY - rect.top) / rect.height) * 100 : 50;
+        return {
+          x: Math.max(0, Math.min(100, x)),
+          y: Math.max(0, Math.min(100, y))
+        };
+      }
+
+      function postImageFocus(element, event, commit) {
+        const point = focusPointFromEvent(element, event);
+        window.parent.postMessage({
+          type: "editor:image-focus",
+          editorId: element.dataset.editorId,
+          x: point.x,
+          y: point.y,
+          commit
+        }, "*");
+      }
+
       document.addEventListener("mouseover", (event) => {
         const element = getEditable(event.target);
         if (!element || element === hovered) return;
@@ -162,6 +193,12 @@ export function injectPreviewBridge(doc) {
       document.addEventListener("click", (event) => {
         const element = getEditable(event.target);
         if (!element) return;
+        if (suppressClick) {
+          suppressClick = false;
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (selected === element && selected.isContentEditable) {
           event.stopPropagation();
           showBadge(selected, false);
@@ -184,6 +221,37 @@ export function injectPreviewBridge(doc) {
           text: selected.textContent || ""
         }, "*");
         showBadge(selected, false);
+      }, true);
+
+      document.addEventListener("pointerdown", (event) => {
+        const element = getEditable(event.target);
+        if (event.button !== 0 || !element || element !== selected || !isImageFocusCandidate(element)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        focusDrag = {
+          element,
+          pointerId: event.pointerId,
+          moved: false
+        };
+        element.setPointerCapture?.(event.pointerId);
+      }, true);
+
+      document.addEventListener("pointermove", (event) => {
+        if (!focusDrag || focusDrag.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        focusDrag.moved = true;
+        postImageFocus(focusDrag.element, event, false);
+      }, true);
+
+      document.addEventListener("pointerup", (event) => {
+        if (!focusDrag || focusDrag.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        postImageFocus(focusDrag.element, event, true);
+        suppressClick = focusDrag.moved;
+        focusDrag.element.releasePointerCapture?.(event.pointerId);
+        focusDrag = null;
       }, true);
 
       document.addEventListener("dragover", (event) => {

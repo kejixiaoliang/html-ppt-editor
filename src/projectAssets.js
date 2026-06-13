@@ -98,6 +98,23 @@ export function buildRelativeAssetUrl(assetPath, entryPath, previousRawUrl = "")
   return relative;
 }
 
+export function applyImageFocusStyle(element, point) {
+  if (!element) return false;
+  const x = clampPercent(point?.x);
+  const y = clampPercent(point?.y);
+  const position = `${x}% ${y}%`;
+
+  if (String(element.tagName || "").toLowerCase() === "img") {
+    element.style.objectFit = "cover";
+    element.style.objectPosition = position;
+    return true;
+  }
+
+  element.style.backgroundSize = "cover";
+  element.style.backgroundPosition = position;
+  return true;
+}
+
 function getDirectory(path) {
   const normalized = normalizeImportPath(path);
   const index = normalized.lastIndexOf("/");
@@ -151,4 +168,10 @@ function guessMimeType(dataUrl) {
 
 function sanitizeFileName(fileName) {
   return normalizeImportPath(fileName).split("/").filter(Boolean).pop() || "replacement-image";
+}
+
+function clampPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 50;
+  return Math.max(0, Math.min(100, Math.round(number)));
 }

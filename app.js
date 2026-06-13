@@ -9,7 +9,12 @@ import * as previewBridge from "./src/previewBridge.js";
 import * as sourceMapping from "./src/sourceMapping.js";
 import * as stateHistory from "./src/stateHistory.js";
 import { createProjectPreviewHtml, importHtmlFolder } from "./src/folderImport.js";
-import { addProjectAssetReplacement, findElementAssetPath, updateElementAssetReference } from "./src/projectAssets.js";
+import {
+  addProjectAssetReplacement,
+  applyImageFocusStyle,
+  findElementAssetPath,
+  updateElementAssetReference,
+} from "./src/projectAssets.js";
 import { buildProjectZipEntries, createZipBlob } from "./src/projectArchive.js";
 
 const sourceEditor = document.querySelector("#sourceEditor");
@@ -291,6 +296,14 @@ function bindEvents() {
         mimeType: event.data.mimeType,
       });
     }
+
+    if (event.data?.type === "editor:image-focus") {
+      applyPreviewImageFocus(event.data.editorId, {
+        x: event.data.x,
+        y: event.data.y,
+        commit: Boolean(event.data.commit),
+      });
+    }
   });
 
   bindInspectorControl(controls.text, (element, value) => updateElementOwnText(element, value), { patch: "text" });
@@ -521,6 +534,37 @@ function replaceSelectedProjectImage(editorId, replacement) {
 function getSelectedProjectAssetPath() {
   const element = getSelectedSourceElement();
   return findElementAssetPath(element, appState.projectEntryPath || appState.sourceLabel, appState.projectAssetUrls);
+}
+
+function applyPreviewImageFocus(editorId, point) {
+  if (!editorId) return false;
+  if (appState.selectedEditorId !== editorId) {
+    appState.selectedEditorId = editorId;
+  }
+
+  const assetPath = getSelectedProjectAssetPath();
+  if (!assetPath) {
+    return false;
+  }
+
+  const previewElement = getSelectedPreviewElement();
+  if (previewElement) {
+    applyImageFocusStyle(previewElement, point);
+  }
+
+  if (!point.commit) {
+    return true;
+  }
+
+  const applied = applySelectedElementChange({
+    patch: "opening",
+    mutate: (element) => applyImageFocusStyle(element, point),
+    after: (element) => updateFloatingToolbarState(element),
+  });
+  if (applied) {
+    setSourceStatus("已调整图片焦点");
+  }
+  return applied;
 }
 
 function applyQuickInput(control) {

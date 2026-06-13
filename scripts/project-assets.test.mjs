@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  applyImageFocusStyle,
   findElementAssetPath,
   addProjectAssetReplacement,
   updateElementAssetReference,
@@ -93,5 +94,23 @@ assert.equal(
   true
 );
 assert.equal(imageElement.attrs["data-image"], "./public/images/new-avatar.webp");
+
+const imgElement = {
+  tagName: "IMG",
+  style: {},
+  getAttribute: () => "",
+};
+applyImageFocusStyle(imgElement, { x: 42.4, y: 61.8 });
+assert.equal(imgElement.style.objectFit, "cover");
+assert.equal(imgElement.style.objectPosition, "42% 62%");
+
+const backgroundElement = {
+  tagName: "DIV",
+  style: {},
+  getAttribute: (name) => (name === "data-image" ? "./public/images/new-avatar.webp" : ""),
+};
+applyImageFocusStyle(backgroundElement, { x: -10, y: 120 });
+assert.equal(backgroundElement.style.backgroundSize, "cover");
+assert.equal(backgroundElement.style.backgroundPosition, "0% 100%");
 
 console.log("Project asset tests passed.");
