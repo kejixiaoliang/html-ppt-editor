@@ -53,6 +53,11 @@ export function rewriteHtmlAssetUrls(html, entryPath, assetUrls) {
     });
 }
 
+export function createProjectPreviewHtml(html, entryPath, assetUrls) {
+  if (!assetUrls?.size) return String(html || "");
+  return rewriteHtmlAssetUrls(html, entryPath, assetUrls);
+}
+
 export function rewriteCssAssetUrls(css, cssPath, assetUrls) {
   const cssDirectory = getDirectory(cssPath);
   const rootDirectory = getRootDirectory(cssPath);
@@ -81,6 +86,7 @@ export async function importHtmlFolder(files) {
   }
 
   const assetUrls = new Map();
+  const projectFiles = new Map();
   const cssFiles = [];
   const scriptFiles = [];
   await Promise.all(
@@ -95,12 +101,22 @@ export async function importHtmlFolder(files) {
         scriptFiles.push({ file, relativePath });
         return;
       }
+      projectFiles.set(relativePath, {
+        path: relativePath,
+        type: "binary",
+        bytes: await readAsBytes(file),
+      });
       assetUrls.set(relativePath, await readAsDataUrl(file));
     })
   );
   await Promise.all(
     cssFiles.map(async ({ file, relativePath }) => {
       const css = await readAsText(file);
+      projectFiles.set(relativePath, {
+        path: relativePath,
+        type: "text",
+        content: css,
+      });
       const rewrittenCss = rewriteCssAssetUrls(css, relativePath, assetUrls);
       assetUrls.set(relativePath, textToDataUrl(rewrittenCss, "text/css"));
     })
@@ -108,16 +124,30 @@ export async function importHtmlFolder(files) {
   await Promise.all(
     scriptFiles.map(async ({ file, relativePath }) => {
       const script = await readAsText(file);
+      projectFiles.set(relativePath, {
+        path: relativePath,
+        type: "text",
+        content: script,
+      });
       const rewrittenScript = rewriteScriptAssetUrls(script, relativePath, assetUrls);
       assetUrls.set(relativePath, textToDataUrl(rewrittenScript, "text/javascript"));
     })
   );
 
   const source = await readAsText(entry.file);
+  projectFiles.set(entry.relativePath, {
+    path: entry.relativePath,
+    type: "text",
+    content: source,
+  });
+  const previewHtml = createProjectPreviewHtml(source, entry.relativePath, assetUrls);
   return {
-    html: rewriteHtmlAssetUrls(source, entry.relativePath, assetUrls),
+    html: source,
+    previewHtml,
     sourceLabel: entry.relativePath,
     entryPath: entry.relativePath,
+    assetUrls,
+    projectFiles,
     assetCount: assetUrls.size,
   };
 }
@@ -202,17 +232,21 @@ function textToDataUrl(text, mimeType) {
 }
 
 function readAsText(file) {
-  return readFile(file, "readAsText");
+  return readFile(file, "readAsText").then((result) => String(result || ""));
 }
 
 function readAsDataUrl(file) {
-  return readFile(file, "readAsDataURL");
+  return readFile(file, "readAsDataURL").then((result) => String(result || ""));
+}
+
+function readAsBytes(file) {
+  return readFile(file, "readAsArrayBuffer").then((buffer) => new Uint8Array(buffer));
 }
 
 function readFile(file, method) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onload = () => resolve(reader.result || "");
     reader.onerror = () => reject(reader.error || new Error("文件读取失败。"));
     reader[method](file);
   });

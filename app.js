@@ -8,7 +8,8 @@ import {
 import * as previewBridge from "./src/previewBridge.js";
 import * as sourceMapping from "./src/sourceMapping.js";
 import * as stateHistory from "./src/stateHistory.js";
-import { importHtmlFolder } from "./src/folderImport.js";
+import { createProjectPreviewHtml, importHtmlFolder } from "./src/folderImport.js";
+import { buildProjectZipEntries, createZipBlob } from "./src/projectArchive.js";
 
 const sourceEditor = document.querySelector("#sourceEditor");
 const previewFrame = document.querySelector("#previewFrame");
@@ -17,6 +18,7 @@ const folderInput = document.querySelector("#folderInput");
 const loadSampleBtn = document.querySelector("#loadSampleBtn");
 const refreshBtn = document.querySelector("#refreshBtn");
 const downloadBtn = document.querySelector("#downloadBtn");
+const downloadZipBtn = document.querySelector("#downloadZipBtn");
 const undoBtn = document.querySelector("#undoBtn");
 const redoBtn = document.querySelector("#redoBtn");
 const locateSourceBtn = document.querySelector("#locateSourceBtn");
@@ -184,6 +186,9 @@ const appState = {
   zoomMode: "fit",
   resizeObserver: null,
   sourceMap: null,
+  projectEntryPath: "",
+  projectAssetUrls: null,
+  projectFiles: null,
   sourceLabel: "示例",
   copiedInlineStyle: "",
 };
@@ -218,6 +223,7 @@ function bindEvents() {
   loadSampleBtn.addEventListener("click", loadSample);
   refreshBtn.addEventListener("click", () => renderPreview());
   downloadBtn.addEventListener("click", downloadHtml);
+  downloadZipBtn.addEventListener("click", downloadProjectZip);
   undoBtn.addEventListener("click", undo);
   redoBtn.addEventListener("click", redo);
   locateSourceBtn.addEventListener("click", () => locateCurrentSourceRange(true));
@@ -706,7 +712,12 @@ function renderPreview(options = {}) {
     { once: true },
   );
 
-  previewFrame.srcdoc = `<!doctype html>\n${appState.sourceDoc.documentElement.outerHTML}`;
+  const previewHtml = createProjectPreviewHtml(
+    appState.sourceDoc.documentElement.outerHTML,
+    appState.projectEntryPath || appState.sourceLabel,
+    appState.projectAssetUrls,
+  );
+  previewFrame.srcdoc = `<!doctype html>\n${previewHtml}`;
 
   if (!options.keepSelection) {
     clearSelectionState();
@@ -1157,6 +1168,7 @@ function handleFileUpload() {
   const reader = new FileReader();
   reader.onload = () => {
     sourceEditor.value = String(reader.result || "");
+    clearProjectAssets();
     appState.sourceLabel = file.name || "上传文件";
     pushHistory(sourceEditor.value);
     renderPreview();
@@ -1174,6 +1186,9 @@ async function handleFolderUpload() {
     const result = await importHtmlFolder(files);
     sourceEditor.value = result.html;
     appState.sourceLabel = result.sourceLabel || "上传文件夹";
+    appState.projectEntryPath = result.entryPath || "";
+    appState.projectAssetUrls = result.assetUrls || null;
+    appState.projectFiles = result.projectFiles || null;
     clearSelectionState();
     pushHistory(sourceEditor.value);
     renderPreview();
@@ -1188,6 +1203,7 @@ async function handleFolderUpload() {
 
 function loadSample() {
   sourceEditor.value = sampleHtml;
+  clearProjectAssets();
   appState.sourceLabel = "示例";
   pushHistory(sourceEditor.value);
   renderPreview();
@@ -1309,15 +1325,40 @@ function formatDraftTime(value) {
 }
 
 function downloadHtml() {
-  const blob = new Blob([sourceEditor.value], {
+  const exportSource = createProjectPreviewHtml(
+    sourceEditor.value,
+    appState.projectEntryPath || appState.sourceLabel,
+    appState.projectAssetUrls,
+  );
+  const blob = new Blob([exportSource], {
     type: "text/html;charset=utf-8",
   });
+  downloadBlob(blob, "edited-html-ppt.html");
+}
+
+function downloadProjectZip() {
+  const entries = buildProjectZipEntries({
+    source: sourceEditor.value,
+    entryPath: appState.projectEntryPath || "index.html",
+    projectFiles: appState.projectFiles,
+  });
+  const blob = createZipBlob(entries);
+  downloadBlob(blob, "edited-html-project.zip");
+}
+
+function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = "edited-html-ppt.html";
+  anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function clearProjectAssets() {
+  appState.projectEntryPath = "";
+  appState.projectAssetUrls = null;
+  appState.projectFiles = null;
 }
 
 function setSourceStatus(text) {

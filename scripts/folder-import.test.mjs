@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  importHtmlFolder,
   pickHtmlEntry,
   rewriteHtmlAssetUrls,
   normalizeImportPath,
@@ -85,5 +86,55 @@ assert.equal(
   `const works = [{ cover: "data:image/png;base64,card", url: "https://example.com/post" }];`,
   "script string asset references should be inlined for runtime-generated images"
 );
+
+class MockFileReader {
+  readAsText(file) {
+    this.result = file.content;
+    this.onload();
+  }
+
+  readAsDataURL(file) {
+    this.result = file.dataUrl;
+    this.onload();
+  }
+
+  readAsArrayBuffer(file) {
+    this.result = file.bytes?.buffer || new Uint8Array().buffer;
+    this.onload();
+  }
+}
+
+globalThis.FileReader = MockFileReader;
+
+const importedProject = await importHtmlFolder([
+  {
+    name: "index.html",
+    webkitRelativePath: "site/index.html",
+    content: '<link rel="stylesheet" href="./styles.css"><div data-image="./images/avatar.png"></div>',
+  },
+  {
+    name: "styles.css",
+    webkitRelativePath: "site/styles.css",
+    content: '.avatar { background: url("./images/avatar.png"); }',
+  },
+  {
+    name: "avatar.png",
+    webkitRelativePath: "site/images/avatar.png",
+    dataUrl: "data:image/png;base64,avatar",
+    bytes: new Uint8Array([1, 2, 3]),
+  },
+]);
+
+assert.equal(
+  importedProject.html,
+  '<link rel="stylesheet" href="./styles.css"><div data-image="./images/avatar.png"></div>',
+  "folder import should keep the editable source as the original entry HTML"
+);
+assert.match(importedProject.previewHtml, /href="data:text\/css/);
+assert.match(importedProject.previewHtml, /data-image="data:image\/png;base64,avatar"/);
+assert.equal(importedProject.assetUrls.get("site/images/avatar.png"), "data:image/png;base64,avatar");
+assert.equal(importedProject.projectFiles.get("site/index.html").content, importedProject.html);
+assert.equal(importedProject.projectFiles.get("site/styles.css").content, '.avatar { background: url("./images/avatar.png"); }');
+assert.deepEqual([...importedProject.projectFiles.get("site/images/avatar.png").bytes], [1, 2, 3]);
 
 console.log("Folder import tests passed.");
