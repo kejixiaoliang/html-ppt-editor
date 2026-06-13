@@ -40,6 +40,7 @@
             上传 HTML
             <input id="fileInput" type="file" accept=".html,.htm,text/html" />
           </label>
+          <input id="imageReplaceInput" type="file" accept="image/*" hidden />
           <label class="button secondary">
             上传文件夹
             <input id="folderInput" type="file" webkitdirectory directory multiple />
@@ -127,6 +128,7 @@
             <div id="floatingToolbar" class="floating-toolbar hidden" aria-label="快捷编辑工具">
               <span id="toolbarSelectionLabel" class="toolbar-chip">body</span>
               <span class="toolbar-group" aria-label="文字格式">
+                <button class="quick-button" type="button" data-quick-action="replace-image" title="替换图片">图</button>
                 <button class="quick-button" type="button" data-quick-action="bold" title="加粗">B</button>
                 <button class="quick-button" type="button" data-quick-action="italic" title="斜体">I</button>
                 <button class="quick-button" type="button" data-quick-action="underline" title="下划线">U</button>

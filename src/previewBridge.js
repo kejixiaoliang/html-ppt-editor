@@ -186,6 +186,44 @@ export function injectPreviewBridge(doc) {
         showBadge(selected, false);
       }, true);
 
+      document.addEventListener("dragover", (event) => {
+        const element = getEditable(event.target);
+        if (!element || !event.dataTransfer?.types?.includes("Files")) return;
+        event.preventDefault();
+        if (hovered && hovered !== selected) hovered.classList.remove("__html_editor_hover__");
+        hovered = element;
+        if (hovered !== selected) hovered.classList.add("__html_editor_hover__");
+        showBadge(hovered, true);
+      }, true);
+
+      document.addEventListener("drop", async (event) => {
+        const element = getEditable(event.target);
+        const file = event.dataTransfer?.files?.[0];
+        if (!element || !file || !file.type.startsWith("image/")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        selectElement(element, false);
+        const dataUrl = await readFileAsDataUrl(file);
+        const bytes = await file.arrayBuffer();
+        window.parent.postMessage({
+          type: "editor:replace-image-drop",
+          editorId: element.dataset.editorId,
+          fileName: file.name,
+          mimeType: file.type,
+          dataUrl,
+          bytes
+        }, "*");
+      }, true);
+
+      function readFileAsDataUrl(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+      }
+
       window.__selectEditorElement = (editorId) => {
         const element = document.querySelector('[data-editor-id="' + editorId + '"]');
         if (!element) return;

@@ -9,12 +9,14 @@ import * as previewBridge from "./src/previewBridge.js";
 import * as sourceMapping from "./src/sourceMapping.js";
 import * as stateHistory from "./src/stateHistory.js";
 import { createProjectPreviewHtml, importHtmlFolder } from "./src/folderImport.js";
+import { addProjectAssetReplacement, findElementAssetPath, updateElementAssetReference } from "./src/projectAssets.js";
 import { buildProjectZipEntries, createZipBlob } from "./src/projectArchive.js";
 
 const sourceEditor = document.querySelector("#sourceEditor");
 const previewFrame = document.querySelector("#previewFrame");
 const fileInput = document.querySelector("#fileInput");
 const folderInput = document.querySelector("#folderInput");
+const imageReplaceInput = document.querySelector("#imageReplaceInput");
 const loadSampleBtn = document.querySelector("#loadSampleBtn");
 const refreshBtn = document.querySelector("#refreshBtn");
 const downloadBtn = document.querySelector("#downloadBtn");
@@ -220,6 +222,7 @@ function bindEvents() {
 
   fileInput.addEventListener("change", handleFileUpload);
   folderInput.addEventListener("change", handleFolderUpload);
+  imageReplaceInput.addEventListener("change", handleImageReplaceUpload);
   loadSampleBtn.addEventListener("click", loadSample);
   refreshBtn.addEventListener("click", () => renderPreview());
   downloadBtn.addEventListener("click", downloadHtml);
@@ -278,6 +281,15 @@ function bindEvents() {
 
     if (event.data?.type === "editor:inline-text") {
       applyInlineTextEdit(event.data.editorId, event.data.text || "");
+    }
+
+    if (event.data?.type === "editor:replace-image-drop") {
+      replaceSelectedProjectImage(event.data.editorId, {
+        fileName: event.data.fileName,
+        dataUrl: event.data.dataUrl,
+        bytes: event.data.bytes,
+        mimeType: event.data.mimeType,
+      });
     }
   });
 
@@ -369,6 +381,11 @@ function applySelectedElementChange({ patch = "opening", mutate, after }) {
 }
 
 function applyQuickAction(action) {
+  if (action === "replace-image") {
+    openImageReplacementPicker();
+    return;
+  }
+
   if (action === "copy-style") {
     copySelectedInlineStyle();
     return;
@@ -425,6 +442,85 @@ function applyQuickAction(action) {
       updateFloatingToolbarState(element);
     },
   });
+}
+
+function openImageReplacementPicker() {
+  const assetPath = getSelectedProjectAssetPath();
+  if (!assetPath) {
+    setSourceStatus("当前元素没有可替换的项目图片资源");
+    return;
+  }
+  imageReplaceInput.value = "";
+  imageReplaceInput.click();
+}
+
+async function handleImageReplaceUpload() {
+  const file = imageReplaceInput.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    setSourceStatus("请选择图片文件");
+    return;
+  }
+
+  const dataUrl = await readFileAsDataUrl(file);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  replaceSelectedProjectImage(appState.selectedEditorId, {
+    fileName: file.name,
+    dataUrl,
+    bytes,
+    mimeType: file.type,
+  });
+}
+
+function replaceSelectedProjectImage(editorId, replacement) {
+  if (!editorId) return false;
+  if (appState.selectedEditorId !== editorId) {
+    appState.selectedEditorId = editorId;
+  }
+
+  const assetPath = getSelectedProjectAssetPath();
+  if (!assetPath) {
+    setSourceStatus("当前元素没有可替换的项目图片资源");
+    return false;
+  }
+
+  const bytes = replacement.bytes instanceof Uint8Array ? replacement.bytes : new Uint8Array(replacement.bytes || []);
+  const replacementAsset = addProjectAssetReplacement({
+    originalPath: assetPath,
+    fileName: replacement.fileName,
+    dataUrl: replacement.dataUrl,
+    bytes,
+    mimeType: replacement.mimeType,
+    assetUrls: appState.projectAssetUrls,
+    projectFiles: appState.projectFiles,
+  });
+  if (!replacementAsset) {
+    setSourceStatus("图片替换失败：未找到对应资源路径");
+    return false;
+  }
+
+  const updated = applySelectedElementChange({
+    patch: "opening",
+    mutate: (element) => updateElementAssetReference(element, {
+      oldPath: assetPath,
+      newPath: replacementAsset.path,
+      entryPath: appState.projectEntryPath || appState.sourceLabel,
+      assetUrls: appState.projectAssetUrls,
+    }),
+  });
+  if (!updated) {
+    setSourceStatus("图片已加入项目，但源码引用更新失败");
+    return false;
+  }
+
+  renderPreview({ keepSelection: true, preserveScroll: true });
+  setSourceStatus(`已替换图片：${replacementAsset.path}`);
+  return true;
+}
+
+function getSelectedProjectAssetPath() {
+  const element = getSelectedSourceElement();
+  return findElementAssetPath(element, appState.projectEntryPath || appState.sourceLabel, appState.projectAssetUrls);
 }
 
 function applyQuickInput(control) {
@@ -569,6 +665,11 @@ function updateFloatingToolbarState(element = getSelectedSourceElement()) {
   const pasteButton = floatingToolbar.querySelector('[data-quick-action="paste-style"]');
   if (pasteButton) {
     pasteButton.disabled = !appState.copiedInlineStyle;
+  }
+
+  const replaceImageButton = floatingToolbar.querySelector('[data-quick-action="replace-image"]');
+  if (replaceImageButton) {
+    replaceImageButton.disabled = !getSelectedProjectAssetPath();
   }
 }
 
@@ -1359,6 +1460,15 @@ function clearProjectAssets() {
   appState.projectEntryPath = "";
   appState.projectAssetUrls = null;
   appState.projectFiles = null;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("图片读取失败"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function setSourceStatus(text) {
