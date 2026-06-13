@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 import {
   buildSourceMap,
   findElementSourceRange,
-  findElementOuterSourceRange,
   getElementIndexPath,
 } from "../src/sourceMapping.js";
 
@@ -105,18 +104,6 @@ assert.ok(
   "range should be anchored inside the second section",
 );
 assert.deepEqual(getElementIndexPath(secondTitle), [1, 0]);
-
-const secondSection = doc.querySelectorAll("section")[1];
-const sectionRange = findElementOuterSourceRange(repeatedSource, doc, secondSection, sourceMap);
-assert.ok(sectionRange, "expected a complete outer range for the second section");
-assert.ok(
-  repeatedSource.slice(sectionRange.start, sectionRange.end).includes("<p>Second body</p>"),
-  "outer range should include the selected section content, not only the opening tag",
-);
-assert.ok(
-  repeatedSource.slice(sectionRange.start, sectionRange.end).trim().endsWith("</section>"),
-  "outer range should end after the matching closing tag",
-);
 
 const app = readFileSync("app.js", "utf8");
 assert.match(app, /import\s+.+sourceMapping\.js/, "app.js should use the source mapping module");

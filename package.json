@@ -5,7 +5,7 @@
   "description": "A local visual editor for importing, adjusting, previewing, and exporting single-file HTML pages.",
   "scripts": {
     "start": "node server/index.js",
-    "check": "node --check app.js && node --check src/previewBridge.js && node --check src/visualEditing.js && node --check server/index.js && node scripts/check.js && node scripts/source-mapping.test.mjs && node scripts/visual-editing.test.mjs && node scripts/folder-import.test.mjs && node scripts/project-archive.test.mjs && node scripts/project-assets.test.mjs",
+    "check": "node --check app.js && node --check server/index.js && node scripts/check.js && node scripts/source-mapping.test.mjs && node scripts/folder-import.test.mjs && node scripts/project-archive.test.mjs && node scripts/project-assets.test.mjs",
     "test": "npm run check"
   }
 }

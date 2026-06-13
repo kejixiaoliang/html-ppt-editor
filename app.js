@@ -16,10 +16,6 @@ import {
   updateElementAssetReference,
 } from "./src/projectAssets.js";
 import { buildProjectZipEntries, createZipBlob } from "./src/projectArchive.js";
-import {
-  applyStylePatch,
-  createLayerPatch,
-} from "./src/visualEditing.js";
 
 const sourceEditor = document.querySelector("#sourceEditor");
 const previewFrame = document.querySelector("#previewFrame");
@@ -185,7 +181,6 @@ const sampleHtml = `<!doctype html>
 const appState = {
   sourceDoc: null,
   selectedEditorId: null,
-  selectedEditorIds: [],
   selectedRange: null,
   updatingInspector: false,
   renderTimer: null,
@@ -203,7 +198,6 @@ const appState = {
   projectFiles: null,
   sourceLabel: "示例",
   copiedInlineStyle: "",
-  copiedElementsHtml: [],
 };
 
 function init() {
@@ -287,15 +281,11 @@ function bindEvents() {
     }
 
     if (event.data?.type === "editor:select") {
-      selectElement(event.data.editorId, event.data.editorIds || [event.data.editorId]);
+      selectElement(event.data.editorId);
     }
 
     if (event.data?.type === "editor:inline-text") {
       applyInlineTextEdit(event.data.editorId, event.data.text || "");
-    }
-
-    if (event.data?.type === "editor:visual-edit") {
-      applyPreviewVisualEdit(event.data.patches || [], { commit: Boolean(event.data.commit) });
     }
 
     if (event.data?.type === "editor:replace-image-drop") {
@@ -421,21 +411,6 @@ function applyQuickAction(action) {
 
   if (action === "clear-style") {
     clearSelectedInlineStyle();
-    return;
-  }
-
-  if (action === "copy-element") {
-    copySelectedElements();
-    return;
-  }
-
-  if (action === "paste-element") {
-    pasteCopiedElements();
-    return;
-  }
-
-  if (["layer-front", "layer-forward", "layer-backward", "layer-back"].includes(action)) {
-    applyLayerAction(action.replace("layer-", ""));
     return;
   }
 
@@ -709,104 +684,6 @@ function clearSelectedInlineStyle() {
   });
 }
 
-function applyPreviewVisualEdit(patches, options = {}) {
-  if (!Array.isArray(patches) || !patches.length) return false;
-
-  for (const item of patches) {
-    const previewElement = getPreviewElementById(item.editorId);
-    if (previewElement) {
-      applyStylePatch(previewElement, item.styles);
-    }
-  }
-
-  if (!options.commit) {
-    positionFloatingToolbar();
-    return true;
-  }
-
-  const applied = applyElementStylePatches(patches);
-  if (applied) {
-    refreshSelectedMetadata();
-    positionFloatingToolbar();
-    scheduleAutosave();
-  }
-  return applied;
-}
-
-function applyElementStylePatches(patches) {
-  let changed = false;
-  for (const item of patches) {
-    const element = getSourceElementById(item.editorId);
-    if (!element || !item.styles) continue;
-    const sourceRange = findSourceRangeForElement(element);
-    applyStylePatch(element, item.styles);
-    if (syncElementToSource(element, sourceRange, "opening")) {
-      changed = true;
-    }
-  }
-  if (changed) {
-    pushHistory(sourceEditor.value);
-  }
-  return changed;
-}
-
-function applyLayerAction(action) {
-  const patches = getSelectedSourceElements().map((element) => {
-    const siblingZIndexes = Array.from(element.parentElement?.children || [])
-      .filter((sibling) => sibling !== element)
-      .map((sibling) => sibling.style?.zIndex || "");
-    return {
-      editorId: element.dataset.editorId,
-      styles: createLayerPatch({
-        action,
-        currentZIndex: element.style.zIndex,
-        siblingZIndexes,
-      }),
-    };
-  });
-
-  if (applyElementStylePatches(patches)) {
-    previewFrame.contentWindow?.__applyEditorStylePatches?.(patches);
-    refreshSelectedMetadata();
-    positionFloatingToolbar();
-    scheduleAutosave();
-    setSourceStatus("已调整图层顺序");
-  }
-}
-
-function copySelectedElements() {
-  const elements = getSelectedSourceElements();
-  appState.copiedElementsHtml = elements.map((element) => sourceMapping.getCleanElementHtml(element));
-  setSourceStatus(appState.copiedElementsHtml.length ? `已复制 ${appState.copiedElementsHtml.length} 个元素` : "没有可复制的元素");
-  updateFloatingToolbarState();
-}
-
-function pasteCopiedElements() {
-  if (!appState.copiedElementsHtml.length) {
-    setSourceStatus("还没有复制元素");
-    updateFloatingToolbarState();
-    return;
-  }
-
-  const anchor = getSelectedSourceElement();
-  if (!anchor) return;
-
-  const anchorRange = sourceMapping.findElementOuterSourceRange(sourceEditor.value, appState.sourceDoc, anchor, appState.sourceMap);
-  if (!anchorRange) {
-    setSourceStatus("源码定位失败，未粘贴元素");
-    return;
-  }
-
-  const insertion = `\n${appState.copiedElementsHtml.join("\n")}`;
-  sourceEditor.value = `${sourceEditor.value.slice(0, anchorRange.end)}${insertion}${sourceEditor.value.slice(anchorRange.end)}`;
-  appState.selectedEditorIds = [anchor.dataset.editorId];
-  appState.selectedEditorId = anchor.dataset.editorId;
-  pushHistory(sourceEditor.value);
-  renderPreview({ keepSelection: true, preserveScroll: true });
-  scheduleAutosave();
-  setSourceStatus(`已粘贴 ${appState.copiedElementsHtml.length} 个元素`);
-}
-
 function updateFloatingToolbarState(element = getSelectedSourceElement()) {
   if (!floatingToolbar) return;
 
@@ -832,11 +709,6 @@ function updateFloatingToolbarState(element = getSelectedSourceElement()) {
   const pasteButton = floatingToolbar.querySelector('[data-quick-action="paste-style"]');
   if (pasteButton) {
     pasteButton.disabled = !appState.copiedInlineStyle;
-  }
-
-  const pasteElementButton = floatingToolbar.querySelector('[data-quick-action="paste-element"]');
-  if (pasteElementButton) {
-    pasteElementButton.disabled = !appState.copiedElementsHtml.length;
   }
 
   const replaceImageButton = floatingToolbar.querySelector('[data-quick-action="replace-image"]');
@@ -905,16 +777,6 @@ function handleShortcuts(event) {
     redo();
   }
 
-  if (cmd && key === "c" && appState.selectedEditorId && !isFormTypingTarget(event.target)) {
-    event.preventDefault();
-    copySelectedElements();
-  }
-
-  if (cmd && key === "v" && appState.selectedEditorId && !isFormTypingTarget(event.target)) {
-    event.preventDefault();
-    pasteCopiedElements();
-  }
-
   if (key === "escape" && appState.selectedEditorId) {
     event.preventDefault();
     clearSelection();
@@ -924,10 +786,6 @@ function handleShortcuts(event) {
     event.preventDefault();
     toggleSourcePanel();
   }
-}
-
-function isFormTypingTarget(target) {
-  return ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName);
 }
 
 function observeLayoutChanges() {
@@ -985,7 +843,7 @@ function renderPreview(options = {}) {
     "load",
     () => {
       if (options.keepSelection && appState.selectedEditorId) {
-        previewFrame.contentWindow?.__selectEditorElement?.(appState.selectedEditorId, appState.selectedEditorIds);
+        previewFrame.contentWindow?.__selectEditorElement?.(appState.selectedEditorId);
         updateInspector();
       }
       if (scrollToRestore) {
@@ -1013,10 +871,9 @@ function renderPreview(options = {}) {
   setSourceStatus("已同步");
 }
 
-function selectElement(editorId, editorIds = [editorId]) {
+function selectElement(editorId) {
   appState.selectedEditorId = editorId;
-  appState.selectedEditorIds = sanitizeSelectedEditorIds(editorIds, editorId);
-  previewFrame.contentWindow?.__selectEditorElement?.(editorId, appState.selectedEditorIds);
+  previewFrame.contentWindow?.__selectEditorElement?.(editorId);
   updateInspector();
   locateCurrentSourceRange(false);
   positionFloatingToolbar();
@@ -1186,32 +1043,11 @@ function getSelectionSize() {
 
 function getSelectedSourceElement() {
   if (!appState.sourceDoc || !appState.selectedEditorId) return null;
-  return getSourceElementById(appState.selectedEditorId);
+  return appState.sourceDoc.querySelector(`[data-editor-id="${appState.selectedEditorId}"]`);
 }
 
 function getSelectedPreviewElement() {
-  return getPreviewElementById(appState.selectedEditorId);
-}
-
-function getSelectedSourceElements() {
-  const ids = appState.selectedEditorIds.length ? appState.selectedEditorIds : [appState.selectedEditorId].filter(Boolean);
-  return ids.map((editorId) => getSourceElementById(editorId)).filter(Boolean);
-}
-
-function getSourceElementById(editorId) {
-  if (!appState.sourceDoc || !editorId) return null;
-  return appState.sourceDoc.querySelector(`[data-editor-id="${editorId}"]`);
-}
-
-function getPreviewElementById(editorId) {
-  if (!editorId) return null;
-  return previewFrame.contentDocument?.querySelector(`[data-editor-id="${editorId}"]`) || null;
-}
-
-function sanitizeSelectedEditorIds(editorIds, fallbackId) {
-  const ids = Array.from(new Set((editorIds || []).filter(Boolean)));
-  if (fallbackId && !ids.includes(fallbackId)) ids.push(fallbackId);
-  return ids;
+  return previewFrame.contentDocument?.querySelector(`[data-editor-id="${appState.selectedEditorId}"]`) || null;
 }
 
 function refreshSelectedMetadata() {
@@ -1526,7 +1362,6 @@ function clearSelection() {
 
 function clearSelectionState() {
   appState.selectedEditorId = null;
-  appState.selectedEditorIds = [];
   appState.selectedRange = null;
   floatingToolbar.classList.add("hidden");
   emptyInspector.classList.remove("hidden");
