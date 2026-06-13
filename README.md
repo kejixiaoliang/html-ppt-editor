@@ -50,3 +50,9 @@ npm run check
 ```text
 docs/deploy-baota.md
 ```
+
+## 文件夹导入
+
+- 点击“上传文件夹”可以导入包含 `index.html` 或其他 `.html/.htm` 文件的本地目录。
+- 导入时会优先选择最浅层的 `index.html`，并把文件夹内相对引用的图片、样式、脚本等资源内联为 data URL。
+- 外部链接、锚点、`data:` 和 `blob:` 地址会保持不变，导出的 HTML 仍然是单文件结果。

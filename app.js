@@ -8,10 +8,12 @@ import {
 import * as previewBridge from "./src/previewBridge.js";
 import * as sourceMapping from "./src/sourceMapping.js";
 import * as stateHistory from "./src/stateHistory.js";
+import { importHtmlFolder } from "./src/folderImport.js";
 
 const sourceEditor = document.querySelector("#sourceEditor");
 const previewFrame = document.querySelector("#previewFrame");
 const fileInput = document.querySelector("#fileInput");
+const folderInput = document.querySelector("#folderInput");
 const loadSampleBtn = document.querySelector("#loadSampleBtn");
 const refreshBtn = document.querySelector("#refreshBtn");
 const downloadBtn = document.querySelector("#downloadBtn");
@@ -212,6 +214,7 @@ function bindEvents() {
   });
 
   fileInput.addEventListener("change", handleFileUpload);
+  folderInput.addEventListener("change", handleFolderUpload);
   loadSampleBtn.addEventListener("click", loadSample);
   refreshBtn.addEventListener("click", () => renderPreview());
   downloadBtn.addEventListener("click", downloadHtml);
@@ -1160,6 +1163,27 @@ function handleFileUpload() {
     scheduleAutosave();
   };
   reader.readAsText(file);
+}
+
+async function handleFolderUpload() {
+  const files = folderInput.files;
+  if (!files?.length) return;
+
+  setSourceStatus("正在导入文件夹...");
+  try {
+    const result = await importHtmlFolder(files);
+    sourceEditor.value = result.html;
+    appState.sourceLabel = result.sourceLabel || "上传文件夹";
+    clearSelectionState();
+    pushHistory(sourceEditor.value);
+    renderPreview();
+    scheduleAutosave();
+    setSourceStatus(`已导入 ${result.assetCount} 个资源`);
+  } catch (error) {
+    setSourceStatus(error?.message || "文件夹导入失败");
+  } finally {
+    folderInput.value = "";
+  }
 }
 
 function loadSample() {
