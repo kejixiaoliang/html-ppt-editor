@@ -1,4 +1,5 @@
 import * as canvasLayout from "./src/canvasLayout.js";
+import * as editorActions from "./src/editorActions.js";
 import {
   setOptionalAttribute,
   styleControlMap,
@@ -6,15 +7,13 @@ import {
   updateFormatButtonState,
 } from "./src/inspectorControls.js";
 import * as previewBridge from "./src/previewBridge.js";
+import * as previewProtocol from "./src/previewProtocol.js";
+import * as projectState from "./src/projectState.js";
+import * as selectionState from "./src/selectionState.js";
 import * as sourceMapping from "./src/sourceMapping.js";
 import * as stateHistory from "./src/stateHistory.js";
 import { createProjectPreviewHtml, importHtmlFolder } from "./src/folderImport.js";
-import {
-  addProjectAssetReplacement,
-  applyImageFocusStyle,
-  findElementAssetPath,
-  updateElementAssetReference,
-} from "./src/projectAssets.js";
+import { findElementAssetPath } from "./src/projectAssets.js";
 import { buildProjectZipEntries, createZipBlob } from "./src/projectArchive.js";
 
 const sourceEditor = document.querySelector("#sourceEditor");
@@ -180,8 +179,7 @@ const sampleHtml = `<!doctype html>
 
 const appState = {
   sourceDoc: null,
-  selectedEditorId: null,
-  selectedRange: null,
+  selection: selectionState.createSelectionState(),
   updatingInspector: false,
   renderTimer: null,
   autosaveTimer: null,
@@ -193,10 +191,7 @@ const appState = {
   zoomMode: "fit",
   resizeObserver: null,
   sourceMap: null,
-  projectEntryPath: "",
-  projectAssetUrls: null,
-  projectFiles: null,
-  sourceLabel: "示例",
+  project: projectState.createProjectState({ sourceLabel: "示例" }),
   copiedInlineStyle: "",
 };
 
@@ -276,19 +271,21 @@ function bindEvents() {
   });
 
   window.addEventListener("message", (event) => {
-    if (event.source !== previewFrame.contentWindow) {
+    if (!previewProtocol.isPreviewMessage(event, previewFrame.contentWindow)) {
       return;
     }
 
-    if (event.data?.type === "editor:select") {
+    const messageType = previewProtocol.getPreviewMessageType(event);
+
+    if (messageType === previewProtocol.previewMessageTypes.select) {
       selectElement(event.data.editorId);
     }
 
-    if (event.data?.type === "editor:inline-text") {
+    if (messageType === previewProtocol.previewMessageTypes.inlineText) {
       applyInlineTextEdit(event.data.editorId, event.data.text || "");
     }
 
-    if (event.data?.type === "editor:replace-image-drop") {
+    if (messageType === previewProtocol.previewMessageTypes.replaceImageDrop) {
       replaceSelectedProjectImage(event.data.editorId, {
         fileName: event.data.fileName,
         dataUrl: event.data.dataUrl,
@@ -297,7 +294,7 @@ function bindEvents() {
       });
     }
 
-    if (event.data?.type === "editor:image-focus") {
+    if (messageType === previewProtocol.previewMessageTypes.imageFocus) {
       applyPreviewImageFocus(event.data.editorId, {
         x: event.data.x,
         y: event.data.y,
@@ -370,20 +367,20 @@ function bindTextDecorationToggle(button, token) {
 }
 
 function applySelectedElementChange({ patch = "opening", mutate, after }) {
-  if (!appState.selectedEditorId) return false;
+  if (!appState.selection.editorId) return false;
   const element = getSelectedSourceElement();
   if (!element) return false;
 
   const sourceRange = findSourceRangeForElement(element);
-  mutate(element);
-
-  const previewElement = getSelectedPreviewElement();
-  if (previewElement) {
-    mutate(previewElement);
-  }
-
-  const synced = syncElementToSource(element, sourceRange, patch);
-  if (!synced) return false;
+  const result = editorActions.syncElementEdit({
+    element,
+    previewElement: getSelectedPreviewElement(),
+    sourceRange,
+    patch,
+    mutate,
+    syncElementToSource,
+  });
+  if (!result.ok) return false;
 
   pushHistory(sourceEditor.value);
   if (after) after(element);
@@ -477,7 +474,7 @@ async function handleImageReplaceUpload() {
 
   const dataUrl = await readFileAsDataUrl(file);
   const bytes = new Uint8Array(await file.arrayBuffer());
-  replaceSelectedProjectImage(appState.selectedEditorId, {
+  replaceSelectedProjectImage(appState.selection.editorId, {
     fileName: file.name,
     dataUrl,
     bytes,
@@ -487,8 +484,8 @@ async function handleImageReplaceUpload() {
 
 function replaceSelectedProjectImage(editorId, replacement) {
   if (!editorId) return false;
-  if (appState.selectedEditorId !== editorId) {
-    appState.selectedEditorId = editorId;
+  if (appState.selection.editorId !== editorId) {
+    selectionState.selectEditorElement(appState.selection, editorId);
   }
 
   const assetPath = getSelectedProjectAssetPath();
@@ -497,15 +494,10 @@ function replaceSelectedProjectImage(editorId, replacement) {
     return false;
   }
 
-  const bytes = replacement.bytes instanceof Uint8Array ? replacement.bytes : new Uint8Array(replacement.bytes || []);
-  const replacementAsset = addProjectAssetReplacement({
-    originalPath: assetPath,
-    fileName: replacement.fileName,
-    dataUrl: replacement.dataUrl,
-    bytes,
-    mimeType: replacement.mimeType,
-    assetUrls: appState.projectAssetUrls,
-    projectFiles: appState.projectFiles,
+  const replacementAsset = editorActions.createImageReplacement({
+    assetPath,
+    replacement,
+    projectState: appState.project,
   });
   if (!replacementAsset) {
     setSourceStatus("图片替换失败：未找到对应资源路径");
@@ -514,11 +506,11 @@ function replaceSelectedProjectImage(editorId, replacement) {
 
   const updated = applySelectedElementChange({
     patch: "opening",
-    mutate: (element) => updateElementAssetReference(element, {
-      oldPath: assetPath,
-      newPath: replacementAsset.path,
-      entryPath: appState.projectEntryPath || appState.sourceLabel,
-      assetUrls: appState.projectAssetUrls,
+    mutate: (element) => editorActions.updateImageReference({
+      element,
+      assetPath,
+      replacementPath: replacementAsset.path,
+      projectState: appState.project,
     }),
   });
   if (!updated) {
@@ -533,13 +525,13 @@ function replaceSelectedProjectImage(editorId, replacement) {
 
 function getSelectedProjectAssetPath() {
   const element = getSelectedSourceElement();
-  return findElementAssetPath(element, appState.projectEntryPath || appState.sourceLabel, appState.projectAssetUrls);
+  return findElementAssetPath(element, projectState.getProjectEntryLabel(appState.project), appState.project.assetUrls);
 }
 
 function applyPreviewImageFocus(editorId, point) {
   if (!editorId) return false;
-  if (appState.selectedEditorId !== editorId) {
-    appState.selectedEditorId = editorId;
+  if (appState.selection.editorId !== editorId) {
+    selectionState.selectEditorElement(appState.selection, editorId);
   }
 
   const assetPath = getSelectedProjectAssetPath();
@@ -549,7 +541,7 @@ function applyPreviewImageFocus(editorId, point) {
 
   const previewElement = getSelectedPreviewElement();
   if (previewElement) {
-    applyImageFocusStyle(previewElement, point);
+    editorActions.applyImageFocus(previewElement, point);
   }
 
   if (!point.commit) {
@@ -558,7 +550,7 @@ function applyPreviewImageFocus(editorId, point) {
 
   const applied = applySelectedElementChange({
     patch: "opening",
-    mutate: (element) => applyImageFocusStyle(element, point),
+    mutate: (element) => editorActions.applyImageFocus(element, point),
     after: (element) => updateFloatingToolbarState(element),
   });
   if (applied) {
@@ -568,7 +560,7 @@ function applyPreviewImageFocus(editorId, point) {
 }
 
 function applyQuickInput(control) {
-  if (!control || !appState.selectedEditorId) return;
+  if (!control || !appState.selection.editorId) return;
 
   const inputType = control.dataset.quickInput;
   const styleProp = control.dataset.styleProp;
@@ -596,18 +588,21 @@ function applyQuickInput(control) {
 
 function applyInlineTextEdit(editorId, text) {
   if (!editorId) return false;
-  if (appState.selectedEditorId !== editorId) {
-    appState.selectedEditorId = editorId;
+  if (appState.selection.editorId !== editorId) {
+    selectionState.selectEditorElement(appState.selection, editorId);
   }
 
   const element = getSelectedSourceElement();
   if (!element) return false;
 
   const sourceRange = findSourceRangeForElement(element);
-  updateElementOwnText(element, text);
-
-  const synced = syncElementToSource(element, sourceRange, "text");
-  if (!synced) return false;
+  const result = editorActions.syncInlineTextEdit({
+    element,
+    text,
+    sourceRange,
+    syncElementToSource,
+  });
+  if (!result.ok) return false;
 
   controls.text.value = getOwnText(element);
   pushHistory(sourceEditor.value);
@@ -777,7 +772,7 @@ function handleShortcuts(event) {
     redo();
   }
 
-  if (key === "escape" && appState.selectedEditorId) {
+  if (key === "escape" && appState.selection.editorId) {
     event.preventDefault();
     clearSelection();
   }
@@ -842,8 +837,8 @@ function renderPreview(options = {}) {
   previewFrame.addEventListener(
     "load",
     () => {
-      if (options.keepSelection && appState.selectedEditorId) {
-        previewFrame.contentWindow?.__selectEditorElement?.(appState.selectedEditorId);
+      if (options.keepSelection && appState.selection.editorId) {
+        previewFrame.contentWindow?.__selectEditorElement?.(appState.selection.editorId);
         updateInspector();
       }
       if (scrollToRestore) {
@@ -859,8 +854,8 @@ function renderPreview(options = {}) {
 
   const previewHtml = createProjectPreviewHtml(
     appState.sourceDoc.documentElement.outerHTML,
-    appState.projectEntryPath || appState.sourceLabel,
-    appState.projectAssetUrls,
+    projectState.getProjectEntryLabel(appState.project),
+    appState.project.assetUrls,
   );
   previewFrame.srcdoc = `<!doctype html>\n${previewHtml}`;
 
@@ -872,7 +867,7 @@ function renderPreview(options = {}) {
 }
 
 function selectElement(editorId) {
-  appState.selectedEditorId = editorId;
+  selectionState.selectEditorElement(appState.selection, editorId);
   previewFrame.contentWindow?.__selectEditorElement?.(editorId);
   updateInspector();
   locateCurrentSourceRange(false);
@@ -898,7 +893,7 @@ function updateInspector() {
   const label = getElementLabel(element);
   const path = getElementPath(element);
   const range = findSourceRangeForElement(element);
-  appState.selectedRange = range;
+  selectionState.updateSelectionRange(appState.selection, range);
 
   controls.selectedSummary.textContent = label;
   controls.elementPath.value = path;
@@ -1007,12 +1002,12 @@ function locateCurrentSourceRange(focusSource) {
     return;
   }
 
-  const range = appState.selectedRange || findSourceRangeForElement(element);
+  const range = appState.selection.range || findSourceRangeForElement(element);
   if (!range) {
     return;
   }
 
-  appState.selectedRange = range;
+  selectionState.updateSelectionRange(appState.selection, range);
   sourceEditor.setSelectionRange(range.start, range.end);
   scrollSourceToOffset(range.start);
   if (focusSource) {
@@ -1035,19 +1030,19 @@ function selectParentElement() {
 }
 
 function getSelectionSize() {
-  const element = previewFrame.contentDocument?.querySelector(`[data-editor-id="${appState.selectedEditorId}"]`);
+  const element = previewFrame.contentDocument?.querySelector(`[data-editor-id="${appState.selection.editorId}"]`);
   if (!element) return "";
   const rect = element.getBoundingClientRect();
   return `${Math.round(rect.width)} x ${Math.round(rect.height)}`;
 }
 
 function getSelectedSourceElement() {
-  if (!appState.sourceDoc || !appState.selectedEditorId) return null;
-  return appState.sourceDoc.querySelector(`[data-editor-id="${appState.selectedEditorId}"]`);
+  if (!appState.sourceDoc || !appState.selection.editorId) return null;
+  return appState.sourceDoc.querySelector(`[data-editor-id="${appState.selection.editorId}"]`);
 }
 
 function getSelectedPreviewElement() {
-  return previewFrame.contentDocument?.querySelector(`[data-editor-id="${appState.selectedEditorId}"]`) || null;
+  return previewFrame.contentDocument?.querySelector(`[data-editor-id="${appState.selection.editorId}"]`) || null;
 }
 
 function refreshSelectedMetadata() {
@@ -1057,7 +1052,7 @@ function refreshSelectedMetadata() {
   const label = getElementLabel(element);
   const path = getElementPath(element);
   const range = findSourceRangeForElement(element);
-  appState.selectedRange = range;
+  selectionState.updateSelectionRange(appState.selection, range);
 
   controls.selectedSummary.textContent = label;
   controls.elementPath.value = path;
@@ -1070,7 +1065,7 @@ function refreshSelectedMetadata() {
 }
 
 function positionFloatingToolbar() {
-  if (!floatingToolbar || !appState.selectedEditorId) {
+  if (!floatingToolbar || !appState.selection.editorId) {
     floatingToolbar?.classList.add("hidden");
     return;
   }
@@ -1114,7 +1109,7 @@ function syncElementToSource(element, previousRange, patchMode) {
   }
 
   sourceEditor.value = result.source;
-  appState.selectedRange = result.range;
+  selectionState.updateSelectionRange(appState.selection, result.range);
   appState.sourceMap = sourceMapping.buildSourceMap(sourceEditor.value, appState.sourceDoc);
   setSourceStatus("已同步");
   return true;
@@ -1286,7 +1281,7 @@ function supportsAttribute(element, attributeName) {
 }
 
 function getComputedPreviewStyle(styleName) {
-  const previewElement = previewFrame.contentDocument?.querySelector(`[data-editor-id="${appState.selectedEditorId}"]`);
+  const previewElement = previewFrame.contentDocument?.querySelector(`[data-editor-id="${appState.selection.editorId}"]`);
   if (!previewElement) return "";
   return previewFrame.contentWindow.getComputedStyle(previewElement)[styleName];
 }
@@ -1313,8 +1308,7 @@ function handleFileUpload() {
   const reader = new FileReader();
   reader.onload = () => {
     sourceEditor.value = String(reader.result || "");
-    clearProjectAssets();
-    appState.sourceLabel = file.name || "上传文件";
+    clearProjectAssets(file.name || "上传文件");
     pushHistory(sourceEditor.value);
     renderPreview();
     scheduleAutosave();
@@ -1330,10 +1324,7 @@ async function handleFolderUpload() {
   try {
     const result = await importHtmlFolder(files);
     sourceEditor.value = result.html;
-    appState.sourceLabel = result.sourceLabel || "上传文件夹";
-    appState.projectEntryPath = result.entryPath || "";
-    appState.projectAssetUrls = result.assetUrls || null;
-    appState.projectFiles = result.projectFiles || null;
+    projectState.applyImportedProject(appState.project, result, "上传文件夹");
     clearSelectionState();
     pushHistory(sourceEditor.value);
     renderPreview();
@@ -1348,8 +1339,7 @@ async function handleFolderUpload() {
 
 function loadSample() {
   sourceEditor.value = sampleHtml;
-  clearProjectAssets();
-  appState.sourceLabel = "示例";
+  clearProjectAssets("示例");
   pushHistory(sourceEditor.value);
   renderPreview();
   scheduleAutosave();
@@ -1361,8 +1351,7 @@ function clearSelection() {
 }
 
 function clearSelectionState() {
-  appState.selectedEditorId = null;
-  appState.selectedRange = null;
+  selectionState.clearSelectionState(appState.selection);
   floatingToolbar.classList.add("hidden");
   emptyInspector.classList.remove("hidden");
   inspectorForm.classList.add("hidden");
@@ -1413,7 +1402,7 @@ function saveDraft() {
   const selectedElement = getSelectedSourceElement();
   const draft = {
     source: sourceEditor.value,
-    sourceLabel: appState.sourceLabel,
+    sourceLabel: appState.project.sourceLabel,
     savedAt: new Date().toISOString(),
     canvasMode: appState.canvasMode,
     zoomMode: appState.zoomMode,
@@ -1442,7 +1431,7 @@ function restoreDraft() {
   if (!draft?.source) return;
 
   sourceEditor.value = draft.source;
-  appState.sourceLabel = draft.sourceLabel || "本地草稿";
+  appState.project.sourceLabel = draft.sourceLabel || "本地草稿";
   appState.canvasMode = draft.canvasMode || "16:9";
   appState.zoomMode = draft.zoomMode || "fit";
   pushHistory(sourceEditor.value, { replace: true });
@@ -1472,8 +1461,8 @@ function formatDraftTime(value) {
 function downloadHtml() {
   const exportSource = createProjectPreviewHtml(
     sourceEditor.value,
-    appState.projectEntryPath || appState.sourceLabel,
-    appState.projectAssetUrls,
+    projectState.getProjectEntryLabel(appState.project),
+    appState.project.assetUrls,
   );
   const blob = new Blob([exportSource], {
     type: "text/html;charset=utf-8",
@@ -1484,8 +1473,8 @@ function downloadHtml() {
 function downloadProjectZip() {
   const entries = buildProjectZipEntries({
     source: sourceEditor.value,
-    entryPath: appState.projectEntryPath || "index.html",
-    projectFiles: appState.projectFiles,
+    entryPath: appState.project.entryPath || "index.html",
+    projectFiles: appState.project.files,
   });
   const blob = createZipBlob(entries);
   downloadBlob(blob, "edited-html-project.zip");
@@ -1500,10 +1489,8 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
-function clearProjectAssets() {
-  appState.projectEntryPath = "";
-  appState.projectAssetUrls = null;
-  appState.projectFiles = null;
+function clearProjectAssets(sourceLabel = "示例") {
+  projectState.clearProjectState(appState.project, sourceLabel);
 }
 
 function readFileAsDataUrl(file) {
