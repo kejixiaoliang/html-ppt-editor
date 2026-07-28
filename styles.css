@@ -507,6 +507,40 @@ button:disabled {
   backdrop-filter: blur(18px);
 }
 
+.floating-toolbar.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.toolbar-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(184, 174, 164, 0.72);
+  border-radius: 7px;
+  color: #736b61;
+  background: rgba(247, 243, 237, 0.86);
+  cursor: grab;
+  font-size: 18px;
+  line-height: 1;
+  touch-action: none;
+}
+
+.toolbar-drag-handle:hover,
+.toolbar-drag-handle:focus-visible {
+  border-color: rgba(182, 106, 88, 0.54);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.floating-toolbar.is-dragging .toolbar-drag-handle {
+  cursor: grabbing;
+}
+
 .toolbar-chip {
   display: inline-flex;
   align-items: center;

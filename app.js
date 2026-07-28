@@ -49,6 +49,7 @@ const canvasInfo = document.querySelector("#canvasInfo");
 const canvasModeButtons = document.querySelectorAll("[data-canvas-mode]");
 const zoomModeButtons = document.querySelectorAll("[data-zoom-mode]");
 const floatingToolbar = document.querySelector("#floatingToolbar");
+const toolbarDragHandle = document.querySelector("#toolbarDragHandle");
 const toolbarSelectionLabel = document.querySelector("#toolbarSelectionLabel");
 const quickActionButtons = document.querySelectorAll("[data-quick-action]");
 const quickInputControls = document.querySelectorAll("[data-quick-input]");
@@ -63,6 +64,7 @@ const restoreDraftBtn = document.querySelector("#restoreDraftBtn");
 const discardDraftBtn = document.querySelector("#discardDraftBtn");
 
 const draftStorageKey = "html-studio:draft:v1";
+const floatingToolbarStorageKey = "html-studio:floating-toolbar-position:v1";
 
 const controls = {
   selectedSummary: document.querySelector("#selectedSummary"),
@@ -193,6 +195,8 @@ const appState = {
   sourceMap: null,
   project: projectState.createProjectState({ sourceLabel: "示例" }),
   copiedInlineStyle: "",
+  floatingToolbarPosition: readFloatingToolbarPosition(),
+  floatingToolbarDrag: null,
 };
 
 function init() {
@@ -237,6 +241,11 @@ function bindEvents() {
   restoreDraftBtn.addEventListener("click", restoreDraft);
   discardDraftBtn.addEventListener("click", discardDraft);
   document.addEventListener("keydown", handleShortcuts);
+  toolbarDragHandle?.addEventListener("pointerdown", startFloatingToolbarDrag);
+  toolbarDragHandle?.addEventListener("dblclick", resetFloatingToolbarPosition);
+  window.addEventListener("pointermove", moveFloatingToolbar);
+  window.addEventListener("pointerup", finishFloatingToolbarDrag);
+  window.addEventListener("pointercancel", finishFloatingToolbarDrag);
   window.addEventListener("resize", () => {
     setAppViewportHeight();
     updateCanvasScale();
@@ -300,6 +309,10 @@ function bindEvents() {
         y: event.data.y,
         commit: Boolean(event.data.commit),
       });
+    }
+
+    if (messageType === previewProtocol.previewMessageTypes.dismissSelection) {
+      clearSelection();
     }
   });
 
@@ -1078,9 +1091,14 @@ function positionFloatingToolbar() {
 
   updateFloatingToolbarState();
   floatingToolbar.classList.remove("hidden");
+  const toolbarRect = floatingToolbar.getBoundingClientRect();
+  if (appState.floatingToolbarPosition) {
+    applyFloatingToolbarPosition(appState.floatingToolbarPosition, toolbarRect);
+    return;
+  }
+
   const frameRect = previewFrame.getBoundingClientRect();
   const elementRect = element.getBoundingClientRect();
-  const toolbarRect = floatingToolbar.getBoundingClientRect();
   const preferredLeft = frameRect.left + elementRect.left + elementRect.width / 2 - toolbarRect.width / 2;
   const preferredTop = frameRect.top + elementRect.top - toolbarRect.height - 10;
   const fallbackTop = frameRect.top + elementRect.bottom + 10;
@@ -1089,6 +1107,84 @@ function positionFloatingToolbar() {
 
   floatingToolbar.style.left = `${left}px`;
   floatingToolbar.style.top = `${top}px`;
+}
+
+function startFloatingToolbarDrag(event) {
+  if (event.button !== 0 || !floatingToolbar || floatingToolbar.classList.contains("hidden")) return;
+  const rect = floatingToolbar.getBoundingClientRect();
+  appState.floatingToolbarDrag = {
+    pointerId: event.pointerId,
+    pointerType: event.pointerType || "mouse",
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top,
+  };
+  floatingToolbar.classList.add("is-dragging");
+  event.preventDefault();
+}
+
+function moveFloatingToolbar(event) {
+  const drag = appState.floatingToolbarDrag;
+  if (!drag || !floatingToolbar || !matchesFloatingToolbarPointer(drag, event)) return;
+  const position = {
+    left: event.clientX - drag.offsetX,
+    top: event.clientY - drag.offsetY,
+  };
+  appState.floatingToolbarPosition = applyFloatingToolbarPosition(position);
+  event.preventDefault();
+}
+
+function finishFloatingToolbarDrag(event) {
+  const drag = appState.floatingToolbarDrag;
+  if (!drag || !matchesFloatingToolbarPointer(drag, event)) return;
+  appState.floatingToolbarDrag = null;
+  floatingToolbar?.classList.remove("is-dragging");
+  writeFloatingToolbarPosition(appState.floatingToolbarPosition);
+}
+
+function matchesFloatingToolbarPointer(drag, event) {
+  return drag.pointerType === "mouse" || drag.pointerId === event.pointerId;
+}
+
+function applyFloatingToolbarPosition(position, toolbarRect = floatingToolbar?.getBoundingClientRect()) {
+  if (!floatingToolbar || !toolbarRect || !position) return null;
+  const left = clamp(position.left, 12, Math.max(12, window.innerWidth - toolbarRect.width - 12));
+  const top = clamp(position.top, 12, Math.max(12, window.innerHeight - toolbarRect.height - 12));
+  const nextPosition = { left, top };
+  floatingToolbar.style.left = `${left}px`;
+  floatingToolbar.style.top = `${top}px`;
+  appState.floatingToolbarPosition = nextPosition;
+  return nextPosition;
+}
+
+function resetFloatingToolbarPosition(event) {
+  event?.preventDefault();
+  appState.floatingToolbarPosition = null;
+  writeFloatingToolbarPosition(null);
+  positionFloatingToolbar();
+}
+
+function readFloatingToolbarPosition() {
+  try {
+    const position = JSON.parse(window.localStorage.getItem(floatingToolbarStorageKey) || "null");
+    if (Number.isFinite(position?.left) && Number.isFinite(position?.top)) {
+      return { left: position.left, top: position.top };
+    }
+  } catch {
+    // Ignore unavailable or invalid local storage.
+  }
+  return null;
+}
+
+function writeFloatingToolbarPosition(position) {
+  try {
+    if (position) {
+      window.localStorage.setItem(floatingToolbarStorageKey, JSON.stringify(position));
+    } else {
+      window.localStorage.removeItem(floatingToolbarStorageKey);
+    }
+  } catch {
+    // The toolbar still works for the current session when storage is unavailable.
+  }
 }
 
 function clamp(value, min, max) {
@@ -1346,8 +1442,8 @@ function loadSample() {
 }
 
 function clearSelection() {
+  previewFrame.contentWindow?.__clearEditorSelection?.();
   clearSelectionState();
-  renderPreview();
 }
 
 function clearSelectionState() {

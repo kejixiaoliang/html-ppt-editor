@@ -3,6 +3,7 @@ export const previewMessageTypes = {
   inlineText: "editor:inline-text",
   replaceImageDrop: "editor:replace-image-drop",
   imageFocus: "editor:image-focus",
+  dismissSelection: "editor:dismiss-selection",
 };
 
 export function isPreviewMessage(event, previewWindow) {
@@ -12,4 +13,3 @@ export function isPreviewMessage(event, previewWindow) {
 export function getPreviewMessageType(event) {
   return event?.data?.type || "";
 }
-
