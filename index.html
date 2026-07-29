@@ -36,20 +36,19 @@
 
         <div class="toolbar" aria-label="项目操作">
           <span id="sourceStatus" class="status-pill">已同步</span>
-          <label class="button secondary">
-            上传 HTML
-            <input id="fileInput" type="file" accept=".html,.htm,text/html" />
-          </label>
+          <button id="openHtmlBtn" class="button secondary" type="button">打开 HTML</button>
+          <input id="fileInput" type="file" accept=".html,.htm,text/html" hidden />
           <input id="imageReplaceInput" type="file" accept="image/*" hidden />
-          <label class="button secondary">
-            上传文件夹
-            <input id="folderInput" type="file" webkitdirectory directory multiple />
-          </label>
+          <button id="openFolderBtn" class="button secondary" type="button">打开文件夹</button>
+          <input id="folderInput" type="file" webkitdirectory directory multiple hidden />
           <button id="loadSampleBtn" class="button secondary" type="button">示例</button>
           <button id="refreshBtn" class="icon-button" type="button" title="刷新渲染" aria-label="刷新渲染">↻</button>
           <button id="undoBtn" class="icon-button" type="button" title="撤销" aria-label="撤销">↶</button>
           <button id="redoBtn" class="icon-button" type="button" title="重做" aria-label="重做">↷</button>
-          <button id="downloadBtn" class="button primary" type="button">
+          <button id="overwriteSaveBtn" class="button primary" type="button" disabled title="请先打开可写的 HTML 文件">
+            覆盖保存
+          </button>
+          <button id="downloadBtn" class="button secondary" type="button">
             <span aria-hidden="true">↓</span>
             导出 HTML
           </button>
