@@ -15,9 +15,17 @@ import * as stateHistory from "./src/stateHistory.js";
 import { createProjectPreviewHtml, importHtmlFolder } from "./src/folderImport.js";
 import { findElementAssetPath } from "./src/projectAssets.js";
 import { buildProjectZipEntries, createZipBlob } from "./src/projectArchive.js";
+import {
+  isFilePickerAbort,
+  readDirectoryProject,
+  supportsDirectoryPicker,
+  supportsFilePicker,
+} from "./src/fileSystemAccess.js";
 
 const sourceEditor = document.querySelector("#sourceEditor");
 const previewFrame = document.querySelector("#previewFrame");
+const openHtmlBtn = document.querySelector("#openHtmlBtn");
+const openFolderBtn = document.querySelector("#openFolderBtn");
 const fileInput = document.querySelector("#fileInput");
 const folderInput = document.querySelector("#folderInput");
 const imageReplaceInput = document.querySelector("#imageReplaceInput");
@@ -25,6 +33,7 @@ const loadSampleBtn = document.querySelector("#loadSampleBtn");
 const refreshBtn = document.querySelector("#refreshBtn");
 const downloadBtn = document.querySelector("#downloadBtn");
 const downloadZipBtn = document.querySelector("#downloadZipBtn");
+const overwriteSaveBtn = document.querySelector("#overwriteSaveBtn");
 const undoBtn = document.querySelector("#undoBtn");
 const redoBtn = document.querySelector("#redoBtn");
 const locateSourceBtn = document.querySelector("#locateSourceBtn");
@@ -49,6 +58,7 @@ const canvasInfo = document.querySelector("#canvasInfo");
 const canvasModeButtons = document.querySelectorAll("[data-canvas-mode]");
 const zoomModeButtons = document.querySelectorAll("[data-zoom-mode]");
 const floatingToolbar = document.querySelector("#floatingToolbar");
+const toolbarDragHandle = document.querySelector("#toolbarDragHandle");
 const toolbarSelectionLabel = document.querySelector("#toolbarSelectionLabel");
 const quickActionButtons = document.querySelectorAll("[data-quick-action]");
 const quickInputControls = document.querySelectorAll("[data-quick-input]");
@@ -63,6 +73,7 @@ const restoreDraftBtn = document.querySelector("#restoreDraftBtn");
 const discardDraftBtn = document.querySelector("#discardDraftBtn");
 
 const draftStorageKey = "html-studio:draft:v1";
+const floatingToolbarStorageKey = "html-studio:floating-toolbar-position:v1";
 
 const controls = {
   selectedSummary: document.querySelector("#selectedSummary"),
@@ -193,6 +204,9 @@ const appState = {
   sourceMap: null,
   project: projectState.createProjectState({ sourceLabel: "示例" }),
   copiedInlineStyle: "",
+  floatingToolbarPosition: readFloatingToolbarPosition(),
+  floatingToolbarDrag: null,
+  writableFileHandle: null,
 };
 
 function init() {
@@ -222,11 +236,14 @@ function bindEvents() {
 
   fileInput.addEventListener("change", handleFileUpload);
   folderInput.addEventListener("change", handleFolderUpload);
+  openHtmlBtn.addEventListener("click", openHtmlFile);
+  openFolderBtn.addEventListener("click", openHtmlFolder);
   imageReplaceInput.addEventListener("change", handleImageReplaceUpload);
   loadSampleBtn.addEventListener("click", loadSample);
   refreshBtn.addEventListener("click", () => renderPreview());
   downloadBtn.addEventListener("click", downloadHtml);
   downloadZipBtn.addEventListener("click", downloadProjectZip);
+  overwriteSaveBtn.addEventListener("click", overwriteCurrentHtml);
   undoBtn.addEventListener("click", undo);
   redoBtn.addEventListener("click", redo);
   locateSourceBtn.addEventListener("click", () => locateCurrentSourceRange(true));
@@ -237,6 +254,11 @@ function bindEvents() {
   restoreDraftBtn.addEventListener("click", restoreDraft);
   discardDraftBtn.addEventListener("click", discardDraft);
   document.addEventListener("keydown", handleShortcuts);
+  toolbarDragHandle?.addEventListener("pointerdown", startFloatingToolbarDrag);
+  toolbarDragHandle?.addEventListener("dblclick", resetFloatingToolbarPosition);
+  window.addEventListener("pointermove", moveFloatingToolbar);
+  window.addEventListener("pointerup", finishFloatingToolbarDrag);
+  window.addEventListener("pointercancel", finishFloatingToolbarDrag);
   window.addEventListener("resize", () => {
     setAppViewportHeight();
     updateCanvasScale();
@@ -300,6 +322,10 @@ function bindEvents() {
         y: event.data.y,
         commit: Boolean(event.data.commit),
       });
+    }
+
+    if (messageType === previewProtocol.previewMessageTypes.dismissSelection) {
+      clearSelection();
     }
   });
 
@@ -1078,9 +1104,14 @@ function positionFloatingToolbar() {
 
   updateFloatingToolbarState();
   floatingToolbar.classList.remove("hidden");
+  const toolbarRect = floatingToolbar.getBoundingClientRect();
+  if (appState.floatingToolbarPosition) {
+    applyFloatingToolbarPosition(appState.floatingToolbarPosition, toolbarRect);
+    return;
+  }
+
   const frameRect = previewFrame.getBoundingClientRect();
   const elementRect = element.getBoundingClientRect();
-  const toolbarRect = floatingToolbar.getBoundingClientRect();
   const preferredLeft = frameRect.left + elementRect.left + elementRect.width / 2 - toolbarRect.width / 2;
   const preferredTop = frameRect.top + elementRect.top - toolbarRect.height - 10;
   const fallbackTop = frameRect.top + elementRect.bottom + 10;
@@ -1089,6 +1120,84 @@ function positionFloatingToolbar() {
 
   floatingToolbar.style.left = `${left}px`;
   floatingToolbar.style.top = `${top}px`;
+}
+
+function startFloatingToolbarDrag(event) {
+  if (event.button !== 0 || !floatingToolbar || floatingToolbar.classList.contains("hidden")) return;
+  const rect = floatingToolbar.getBoundingClientRect();
+  appState.floatingToolbarDrag = {
+    pointerId: event.pointerId,
+    pointerType: event.pointerType || "mouse",
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top,
+  };
+  floatingToolbar.classList.add("is-dragging");
+  event.preventDefault();
+}
+
+function moveFloatingToolbar(event) {
+  const drag = appState.floatingToolbarDrag;
+  if (!drag || !floatingToolbar || !matchesFloatingToolbarPointer(drag, event)) return;
+  const position = {
+    left: event.clientX - drag.offsetX,
+    top: event.clientY - drag.offsetY,
+  };
+  appState.floatingToolbarPosition = applyFloatingToolbarPosition(position);
+  event.preventDefault();
+}
+
+function finishFloatingToolbarDrag(event) {
+  const drag = appState.floatingToolbarDrag;
+  if (!drag || !matchesFloatingToolbarPointer(drag, event)) return;
+  appState.floatingToolbarDrag = null;
+  floatingToolbar?.classList.remove("is-dragging");
+  writeFloatingToolbarPosition(appState.floatingToolbarPosition);
+}
+
+function matchesFloatingToolbarPointer(drag, event) {
+  return drag.pointerType === "mouse" || drag.pointerId === event.pointerId;
+}
+
+function applyFloatingToolbarPosition(position, toolbarRect = floatingToolbar?.getBoundingClientRect()) {
+  if (!floatingToolbar || !toolbarRect || !position) return null;
+  const left = clamp(position.left, 12, Math.max(12, window.innerWidth - toolbarRect.width - 12));
+  const top = clamp(position.top, 12, Math.max(12, window.innerHeight - toolbarRect.height - 12));
+  const nextPosition = { left, top };
+  floatingToolbar.style.left = `${left}px`;
+  floatingToolbar.style.top = `${top}px`;
+  appState.floatingToolbarPosition = nextPosition;
+  return nextPosition;
+}
+
+function resetFloatingToolbarPosition(event) {
+  event?.preventDefault();
+  appState.floatingToolbarPosition = null;
+  writeFloatingToolbarPosition(null);
+  positionFloatingToolbar();
+}
+
+function readFloatingToolbarPosition() {
+  try {
+    const position = JSON.parse(window.localStorage.getItem(floatingToolbarStorageKey) || "null");
+    if (Number.isFinite(position?.left) && Number.isFinite(position?.top)) {
+      return { left: position.left, top: position.top };
+    }
+  } catch {
+    // Ignore unavailable or invalid local storage.
+  }
+  return null;
+}
+
+function writeFloatingToolbarPosition(position) {
+  try {
+    if (position) {
+      window.localStorage.setItem(floatingToolbarStorageKey, JSON.stringify(position));
+    } else {
+      window.localStorage.removeItem(floatingToolbarStorageKey);
+    }
+  } catch {
+    // The toolbar still works for the current session when storage is unavailable.
+  }
 }
 
 function clamp(value, min, max) {
@@ -1302,34 +1411,63 @@ function normalizeColor(value) {
     .replace(/^/, "#");
 }
 
-function handleFileUpload() {
+async function openHtmlFile() {
+  if (!supportsFilePicker(window)) {
+    fileInput.click();
+    return;
+  }
+
+  try {
+    const [fileHandle] = await window.showOpenFilePicker({
+      multiple: false,
+      types: [{
+        description: "HTML 文件",
+        accept: { "text/html": [".html", ".htm"] },
+      }],
+    });
+    const file = await fileHandle.getFile();
+    loadOpenedHtml(await file.text(), file.name || "打开文件", fileHandle);
+  } catch (error) {
+    if (!isFilePickerAbort(error)) {
+      setSourceStatus(error?.message || "打开 HTML 失败");
+    }
+  }
+}
+
+async function openHtmlFolder() {
+  if (!supportsDirectoryPicker(window)) {
+    folderInput.click();
+    return;
+  }
+
+  try {
+    const directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+    const directoryProject = await readDirectoryProject(directoryHandle);
+    await loadOpenedFolder(directoryProject.files, directoryProject.fileHandles);
+  } catch (error) {
+    if (!isFilePickerAbort(error)) {
+      setSourceStatus(error?.message || "打开文件夹失败");
+    }
+  }
+}
+
+async function handleFileUpload() {
   const file = fileInput.files?.[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    sourceEditor.value = String(reader.result || "");
-    clearProjectAssets(file.name || "上传文件");
-    pushHistory(sourceEditor.value);
-    renderPreview();
-    scheduleAutosave();
-  };
-  reader.readAsText(file);
+  try {
+    loadOpenedHtml(await file.text(), file.name || "上传文件");
+  } catch (error) {
+    setSourceStatus(error?.message || "读取 HTML 失败");
+  } finally {
+    fileInput.value = "";
+  }
 }
 
 async function handleFolderUpload() {
   const files = folderInput.files;
   if (!files?.length) return;
-
-  setSourceStatus("正在导入文件夹...");
   try {
-    const result = await importHtmlFolder(files);
-    sourceEditor.value = result.html;
-    projectState.applyImportedProject(appState.project, result, "上传文件夹");
-    clearSelectionState();
-    pushHistory(sourceEditor.value);
-    renderPreview();
-    scheduleAutosave();
-    setSourceStatus(`已导入 ${result.assetCount} 个资源`);
+    await loadOpenedFolder(files);
   } catch (error) {
     setSourceStatus(error?.message || "文件夹导入失败");
   } finally {
@@ -1337,17 +1475,42 @@ async function handleFolderUpload() {
   }
 }
 
+function loadOpenedHtml(source, sourceLabel, fileHandle = null) {
+  sourceEditor.value = String(source || "");
+  clearProjectAssets(sourceLabel);
+  setWritableFileHandle(fileHandle);
+  clearSelectionState();
+  pushHistory(sourceEditor.value);
+  renderPreview();
+  scheduleAutosave();
+  setSourceStatus(`已打开 ${sourceLabel}`);
+}
+
+async function loadOpenedFolder(files, fileHandles = null) {
+  setSourceStatus("正在导入文件夹...");
+  const result = await importHtmlFolder(files);
+  sourceEditor.value = result.html;
+  projectState.applyImportedProject(appState.project, result, "上传文件夹");
+  setWritableFileHandle(fileHandles?.get(result.entryPath) || null);
+  clearSelectionState();
+  pushHistory(sourceEditor.value);
+  renderPreview();
+  scheduleAutosave();
+  setSourceStatus(`已打开 ${result.entryPath} · ${result.assetCount} 个资源`);
+}
+
 function loadSample() {
   sourceEditor.value = sampleHtml;
   clearProjectAssets("示例");
+  setWritableFileHandle(null);
   pushHistory(sourceEditor.value);
   renderPreview();
   scheduleAutosave();
 }
 
 function clearSelection() {
+  previewFrame.contentWindow?.__clearEditorSelection?.();
   clearSelectionState();
-  renderPreview();
 }
 
 function clearSelectionState() {
@@ -1432,6 +1595,7 @@ function restoreDraft() {
 
   sourceEditor.value = draft.source;
   appState.project.sourceLabel = draft.sourceLabel || "本地草稿";
+  setWritableFileHandle(null);
   appState.canvasMode = draft.canvasMode || "16:9";
   appState.zoomMode = draft.zoomMode || "fit";
   pushHistory(sourceEditor.value, { replace: true });
@@ -1470,6 +1634,36 @@ function downloadHtml() {
   downloadBlob(blob, "edited-html-ppt.html");
 }
 
+async function overwriteCurrentHtml() {
+  const fileHandle = appState.writableFileHandle;
+  if (!fileHandle) {
+    setSourceStatus("请先打开可写的 HTML 文件，或使用导出 HTML");
+    return;
+  }
+
+  overwriteSaveBtn.disabled = true;
+  setSourceStatus("正在覆盖保存...");
+  try {
+    const writable = await fileHandle.createWritable();
+    await writable.write(sourceEditor.value);
+    await writable.close();
+    updateSavedEntrySource();
+    setSourceStatus("已覆盖保存");
+  } catch (error) {
+    setSourceStatus(error?.message || "覆盖保存失败，请使用导出 HTML 备份");
+  } finally {
+    updateOverwriteSaveButton();
+  }
+}
+
+function updateSavedEntrySource() {
+  const entryPath = projectState.getProjectEntryLabel(appState.project);
+  const entry = appState.project.files?.get(entryPath);
+  if (entry?.type === "text") {
+    entry.content = sourceEditor.value;
+  }
+}
+
 function downloadProjectZip() {
   const entries = buildProjectZipEntries({
     source: sourceEditor.value,
@@ -1491,6 +1685,17 @@ function downloadBlob(blob, filename) {
 
 function clearProjectAssets(sourceLabel = "示例") {
   projectState.clearProjectState(appState.project, sourceLabel);
+}
+
+function setWritableFileHandle(fileHandle) {
+  appState.writableFileHandle = fileHandle || null;
+  updateOverwriteSaveButton();
+}
+
+function updateOverwriteSaveButton() {
+  const canOverwrite = Boolean(appState.writableFileHandle);
+  overwriteSaveBtn.disabled = !canOverwrite;
+  overwriteSaveBtn.title = canOverwrite ? "覆盖保存到原 HTML 文件" : "请先打开可写的 HTML 文件";
 }
 
 function readFileAsDataUrl(file) {
