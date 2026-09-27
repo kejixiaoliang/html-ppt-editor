@@ -144,6 +144,15 @@ export function injectPreviewBridge(doc) {
         showBadge(selected, false);
       }
 
+      function clearSelectedElement() {
+        if (!selected) return;
+        selected.classList.remove("__html_editor_selected__", "__html_editor_hover__");
+        disableInlineEditing(selected);
+        selected = null;
+        hovered = null;
+        badge.hidden = true;
+      }
+
       function isImageFocusCandidate(element) {
         if (!element) return false;
         if (element.tagName?.toLowerCase() === "img") return true;
@@ -223,6 +232,13 @@ export function injectPreviewBridge(doc) {
         showBadge(selected, false);
       }, true);
 
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || !selected) return;
+        event.preventDefault();
+        event.stopPropagation();
+        window.parent.postMessage({ type: "editor:dismiss-selection" }, "*");
+      }, true);
+
       document.addEventListener("pointerdown", (event) => {
         const element = getEditable(event.target);
         if (event.button !== 0 || !element || element !== selected || !isImageFocusCandidate(element)) return;
@@ -297,6 +313,8 @@ export function injectPreviewBridge(doc) {
         if (!element) return;
         selectElement(element, false);
       };
+
+      window.__clearEditorSelection = clearSelectedElement;
     })();
   `;
 
